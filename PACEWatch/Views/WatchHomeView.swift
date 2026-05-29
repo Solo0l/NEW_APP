@@ -1,12 +1,17 @@
 import SwiftUI
 
 struct WatchHomeView: View {
-    @EnvironmentObject private var service: WatchRunService
+    @Environment(WatchRunService.self) private var service
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
+            Text("PACE")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color(hex: "606060"))
+                .tracking(3)
+
             Button {
-                Task { @MainActor in service.startCountdown() }
+                service.startCountdown()
             } label: {
                 Text("RUN")
                     .font(PACEWatchFonts.buttonLabel)
@@ -19,8 +24,6 @@ struct WatchHomeView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 8)
-        .navigationTitle("PACE")
-        .navigationBarTitleDisplayMode(.large)
         .task { await service.requestAuthorization() }
     }
 }
@@ -28,7 +31,7 @@ struct WatchHomeView: View {
 // MARK: - Countdown
 
 struct WatchCountdownView: View {
-    @EnvironmentObject private var service: WatchRunService
+    @Environment(WatchRunService.self) private var service
 
     var body: some View {
         ZStack {

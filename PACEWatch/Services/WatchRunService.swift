@@ -1,20 +1,18 @@
 import Foundation
 import HealthKit
-import CoreLocation
 import WatchKit
+import SwiftData
 
-// Re-use the same RunPhase enum from the iOS app
-// (In a real project this would live in a shared Swift Package)
+// RunPhase is defined in PACE/Models/Enums.swift, shared via project.yml
+// SplitSnapshot is redefined here for Watch independence
 
 @Observable
 @MainActor
-final class WatchRunService: ObservableObject {
+final class WatchRunService {
 
-    // MARK: - State
+    // MARK: - Phase & Metrics
 
     var phase: RunPhase = .idle
-
-    // Live metrics
     var currentPaceSecondsPerMeter: Double = 0
     var distanceMeters: Double = 0
     var elapsedTime: TimeInterval = 0
@@ -23,19 +21,19 @@ final class WatchRunService: ObservableObject {
     var lapDistanceMeters: Double = 0
     var currentLapIndex: Int = 0
     var lapStartTime: Date = .now
-    var completedSplits: [SplitSnapshot] = []
+    var completedSplits: [WatchSplitSnapshot] = []
 
     // MARK: - Private
 
     private let store = HKHealthStore()
     private var workoutSession: HKWorkoutSession?
     private var workoutBuilder: HKLiveWorkoutBuilder?
-
     private var elapsedTimer: Timer?
     private var runStartTime: Date?
     private var pauseStartTime: Date?
     private var totalPausedTime: TimeInterval = 0
-    private var lapIntervalMeters: Double = 1000
+    private let lapIntervalMeters: Double = 1000
+    private var activeRunID: UUID?
 
     // MARK: - Authorization
 
@@ -50,21 +48,22 @@ final class WatchRunService: ObservableObject {
         try? await store.requestAuthorization(toShare: types, read: types)
     }
 
-    // MARK: - Start Flow
+    // MARK: - Start
 
     func startCountdown() {
+        guard case .idle = phase else { return }
         phase = .countdown(secondsRemaining: 3)
         var remaining = 3
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }
             remaining -= 1
             if remaining > 0 {
-                Task { @MainActor in self.phase = .countdown(secondsRemaining: remaining) }
-                WKInterfaceDevice.current().play(.click)
+                Task { @MainActor [weak self] in
+                    self?.phase = .countdown(secondsRemaining: remaining)
+                    WKInterfaceDevice.current().play(.click)
+                }
             } else {
                 timer.invalidate()
-                WKInterfaceDevice.current().play(.start)
-                Task { @MainActor in await self.beginWorkout() }
+                Task { @MainActor [weak self] in await self?.beginWorkout() }
             }
         }
     }
@@ -78,64 +77,61 @@ final class WatchRunService: ObservableObject {
             let session = try HKWorkoutSession(healthStore: store, configuration: config)
             let builder = session.associatedWorkoutBuilder()
             builder.dataSource = HKLiveWorkoutDataSource(healthStore: store, workoutConfiguration: config)
-            self.workoutSession = session
-            self.workoutBuilder = builder
-
-            session.delegate = WorkoutSessionDelegate(service: self)
-            builder.delegate = WorkoutBuilderDelegate(service: self)
-
+            workoutSession = session
+            workoutBuilder = builder
+            session.delegate = WorkoutSessionDelegate.shared(service: self)
+            builder.delegate = WorkoutBuilderDelegate.shared(service: self)
             session.startActivity(with: .now)
             try await builder.beginCollection(at: .now)
-
-            runStartTime = .now
-            totalPausedTime = 0
-            lapStartTime = .now
-            currentLapIndex = 0
-            lapDistanceMeters = 0
-            completedSplits = []
-            startElapsedTimer()
-            phase = .active
         } catch {
-            // Fallback: still enter active phase with local timer only
-            runStartTime = .now
-            startElapsedTimer()
-            phase = .active
+            // Workout session failed — continue with timer-only mode
         }
+
+        let runID = UUID()
+        activeRunID = runID
+        runStartTime = .now
+        totalPausedTime = 0
+        lapStartTime = .now
+        currentLapIndex = 0
+        lapDistanceMeters = 0
+        completedSplits = []
+        startElapsedTimer()
+        WKInterfaceDevice.current().play(.start)
+        phase = .active
     }
 
     // MARK: - Pause / Resume
 
     func pauseRun() {
+        guard case .active = phase else { return }
         workoutSession?.pause()
         pauseStartTime = .now
         stopElapsedTimer()
-        phase = .paused
         WKInterfaceDevice.current().play(.stop)
+        phase = .paused
     }
 
     func resumeRun() {
-        if let pauseStart = pauseStartTime {
-            totalPausedTime += Date.now.timeIntervalSince(pauseStart)
+        guard case .paused = phase else { return }
+        if let ps = pauseStartTime {
+            totalPausedTime += Date.now.timeIntervalSince(ps)
         }
         pauseStartTime = nil
         workoutSession?.resume()
         startElapsedTimer()
-        phase = .active
         WKInterfaceDevice.current().play(.start)
+        phase = .active
     }
 
     func markLap() {
         let now = Date.now
-        let split = SplitSnapshot(
+        let lapTime = now.timeIntervalSince(lapStartTime)
+        completedSplits.append(WatchSplitSnapshot(
             index: currentLapIndex,
-            startDate: lapStartTime,
-            endDate: now,
             distanceMeters: lapDistanceMeters,
-            activeDuration: now.timeIntervalSince(lapStartTime),
-            paceSecondsPerMeter: lapDistanceMeters > 0 ? now.timeIntervalSince(lapStartTime) / lapDistanceMeters : 0,
-            averageHeartRate: nil
-        )
-        completedSplits.append(split)
+            activeDuration: lapTime,
+            paceSecondsPerMeter: lapDistanceMeters > 0 ? lapTime / lapDistanceMeters : 0
+        ))
         currentLapIndex += 1
         lapDistanceMeters = 0
         lapStartTime = now
@@ -143,59 +139,41 @@ final class WatchRunService: ObservableObject {
     }
 
     func endRun() {
+        switch phase {
+        case .active, .paused: break
+        default: return
+        }
         stopElapsedTimer()
         workoutSession?.end()
 
-        // Build a Run object for the summary view
-        let run = Run(startDate: runStartTime ?? .now, status: .completed)
-        run.endDate = .now
-        run.activeDuration = elapsedTime
-        run.distanceMeters = distanceMeters
-        run.elevationGainMeters = elevationGain
-        if distanceMeters > 0, elapsedTime > 0 {
-            run.averagePaceSecondsPerMeter = elapsedTime / distanceMeters
-        }
-        if let hr = currentHeartRate {
-            run.averageHeartRate = hr
-        }
-
+        let id = activeRunID ?? UUID()
+        activeRunID = nil
         WKInterfaceDevice.current().play(.success)
-        phase = .ended(run: run)
+        phase = .ended(runID: id)
     }
 
     func resetToIdle() {
-        phase = .idle
-        distanceMeters = 0
-        elapsedTime = 0
-        currentPaceSecondsPerMeter = 0
-        currentHeartRate = nil
-        lapDistanceMeters = 0
-        completedSplits = []
+        stopElapsedTimer()
         workoutSession = nil
         workoutBuilder = nil
+        resetMetrics()
+        phase = .idle
     }
 
-    // MARK: - HealthKit Callbacks (called by delegates)
+    // MARK: - HealthKit Callbacks
 
-    func updateHeartRate(_ bpm: Double) {
+    func didReceiveHeartRate(_ bpm: Double) {
         currentHeartRate = bpm
     }
 
-    func updateDistance(_ meters: Double) {
+    func didReceiveDistance(_ meters: Double) {
         let delta = meters - distanceMeters
         distanceMeters = meters
-        lapDistanceMeters += delta
-
-        // Speed → pace
+        lapDistanceMeters += max(0, delta)
         if elapsedTime > 0, distanceMeters > 0 {
-            let instantPace = elapsedTime / distanceMeters
-            currentPaceSecondsPerMeter = instantPace
+            currentPaceSecondsPerMeter = elapsedTime / distanceMeters
         }
-
-        // Auto-lap
-        if lapDistanceMeters >= lapIntervalMeters {
-            markLap()
-        }
+        if lapDistanceMeters >= lapIntervalMeters { markLap() }
     }
 
     // MARK: - Timer
@@ -203,51 +181,62 @@ final class WatchRunService: ObservableObject {
     private func startElapsedTimer() {
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self, let start = self.runStartTime else { return }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 self.elapsedTime = max(0, Date.now.timeIntervalSince(start) - self.totalPausedTime)
             }
         }
     }
 
     private func stopElapsedTimer() {
-        elapsedTimer?.invalidate()
-        elapsedTimer = nil
+        elapsedTimer?.invalidate(); elapsedTimer = nil
+    }
+
+    private func resetMetrics() {
+        elapsedTime = 0; distanceMeters = 0; currentPaceSecondsPerMeter = 0
+        currentHeartRate = nil; lapDistanceMeters = 0; currentLapIndex = 0
+        completedSplits = []; runStartTime = nil; pauseStartTime = nil; totalPausedTime = 0
     }
 }
 
-// MARK: - HKWorkoutSessionDelegate Wrapper
+// MARK: - Watch Split Snapshot
 
-final class WorkoutSessionDelegate: NSObject, HKWorkoutSessionDelegate {
-    weak var service: WatchRunService?
-    init(service: WatchRunService) { self.service = service }
-
-    func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from fromState: HKWorkoutSessionState, date: Date) {}
-    func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {}
+struct WatchSplitSnapshot {
+    var index: Int
+    var distanceMeters: Double
+    var activeDuration: TimeInterval
+    var paceSecondsPerMeter: Double
 }
 
-// MARK: - HKLiveWorkoutBuilderDelegate Wrapper
+// MARK: - Workout Delegates
+
+final class WorkoutSessionDelegate: NSObject, HKWorkoutSessionDelegate {
+    private weak var service: WatchRunService?
+    static func shared(service: WatchRunService) -> WorkoutSessionDelegate {
+        let d = WorkoutSessionDelegate(); d.service = service; return d
+    }
+    func workoutSession(_ session: HKWorkoutSession, didChangeTo: HKWorkoutSessionState, from: HKWorkoutSessionState, date: Date) {}
+    func workoutSession(_ session: HKWorkoutSession, didFailWithError error: Error) {}
+}
 
 final class WorkoutBuilderDelegate: NSObject, HKLiveWorkoutBuilderDelegate {
-    weak var service: WatchRunService?
-    init(service: WatchRunService) { self.service = service }
+    private weak var service: WatchRunService?
+    static func shared(service: WatchRunService) -> WorkoutBuilderDelegate {
+        let d = WorkoutBuilderDelegate(); d.service = service; return d
+    }
+    func workoutBuilderDidCollectEvent(_ builder: HKLiveWorkoutBuilder) {}
 
-    func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
-
-    func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder, didCollectDataOf collectedTypes: Set<HKSampleType>) {
-        for type in collectedTypes {
-            guard let quantityType = type as? HKQuantityType else { continue }
-            let stats = workoutBuilder.statistics(for: quantityType)
-
-            if quantityType == HKQuantityType(.heartRate),
-               let qty = stats?.mostRecentQuantity() {
+    func workoutBuilder(_ builder: HKLiveWorkoutBuilder, didCollectDataOf types: Set<HKSampleType>) {
+        for type in types {
+            guard let qt = type as? HKQuantityType else { continue }
+            let stats = builder.statistics(for: qt)
+            if qt == HKQuantityType(.heartRate), let qty = stats?.mostRecentQuantity() {
                 let bpm = qty.doubleValue(for: HKUnit(from: "count/min"))
-                Task { @MainActor in service?.updateHeartRate(bpm) }
+                Task { @MainActor [weak self] in self?.service?.didReceiveHeartRate(bpm) }
             }
-
-            if quantityType == HKQuantityType(.distanceWalkingRunning),
-               let qty = stats?.sumQuantity() {
-                let meters = qty.doubleValue(for: .meter())
-                Task { @MainActor in service?.updateDistance(meters) }
+            if qt == HKQuantityType(.distanceWalkingRunning), let qty = stats?.sumQuantity() {
+                let m = qty.doubleValue(for: .meter())
+                Task { @MainActor [weak self] in self?.service?.didReceiveDistance(m) }
             }
         }
     }

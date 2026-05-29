@@ -12,7 +12,7 @@ final class Run {
     var activeDuration: TimeInterval       // Excludes paused time
     var totalDuration: TimeInterval        // Includes paused time
 
-    // Distance & Pace (always stored in SI units: meters, seconds/meter)
+    // Distance & Pace (always stored in SI: meters, seconds/meter)
     var distanceMeters: Double
     var averagePaceSecondsPerMeter: Double
     var bestPaceSecondsPerMeter: Double
@@ -28,19 +28,20 @@ final class Run {
     // Energy
     var activeCalories: Double?
 
-    // Route — encoded as [CLLocationCoordinate2D] via Codable wrapper
-    var routeData: Data?
+    // Route — stored as flat arrays to avoid repeated JSON decode
+    var routeLatitudes: [Double]
+    var routeLongitudes: [Double]
 
     // Status
     var status: RunStatus
 
     // Per-run goal
     var goalType: GoalType?
-    var goalValueMeters: Double?          // Distance goal in meters
-    var goalValueSeconds: Double?         // Time goal in seconds
+    var goalValueMeters: Double?
+    var goalValueSeconds: Double?
 
     // HealthKit cross-reference
-    var healthKitWorkoutID: String?       // UUID as string
+    var healthKitWorkoutID: String?
 
     @Relationship(deleteRule: .cascade)
     var splits: [Split] = []
@@ -60,7 +61,28 @@ final class Run {
         self.distanceMeters = 0
         self.averagePaceSecondsPerMeter = 0
         self.bestPaceSecondsPerMeter = 0
+        self.routeLatitudes = []
+        self.routeLongitudes = []
         self.status = status
+    }
+
+    // MARK: - Route access (O(1), no JSON decode)
+
+    var route: [CLLocationCoordinate2D] {
+        get {
+            zip(routeLatitudes, routeLongitudes).map {
+                CLLocationCoordinate2D(latitude: $0.0, longitude: $0.1)
+            }
+        }
+        set {
+            routeLatitudes = newValue.map(\.latitude)
+            routeLongitudes = newValue.map(\.longitude)
+        }
+    }
+
+    func appendRoutePoint(_ coordinate: CLLocationCoordinate2D) {
+        routeLatitudes.append(coordinate.latitude)
+        routeLongitudes.append(coordinate.longitude)
     }
 
     // MARK: - Computed Display Helpers
@@ -75,30 +97,5 @@ final class Run {
 
     func bestPace(in unit: DistanceUnit) -> TimeInterval {
         bestPaceSecondsPerMeter * unit.metersPerUnit
-    }
-
-    var route: [CLLocationCoordinate2D] {
-        get {
-            guard let data = routeData else { return [] }
-            return (try? JSONDecoder().decode([CodableCoordinate].self, from: data))?.map(\.coordinate) ?? []
-        }
-        set {
-            routeData = try? JSONEncoder().encode(newValue.map(CodableCoordinate.init))
-        }
-    }
-}
-
-// Lightweight Codable wrapper for CLLocationCoordinate2D
-struct CodableCoordinate: Codable {
-    var latitude: Double
-    var longitude: Double
-
-    init(_ coordinate: CLLocationCoordinate2D) {
-        self.latitude = coordinate.latitude
-        self.longitude = coordinate.longitude
-    }
-
-    var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 }

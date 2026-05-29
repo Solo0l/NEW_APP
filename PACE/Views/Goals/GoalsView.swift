@@ -7,81 +7,71 @@ struct GoalsView: View {
     @Query private var users: [User]
     @Environment(\.modelContext) private var context
 
-    @State private var showGoalSetup = false
+    @State private var showSetup = false
 
-    private var unit: DistanceUnit { users.first?.preferences.distanceUnit ?? .kilometers }
-    private var completedRuns: [Run] { runs.filter { $0.status == .completed } }
-    private var activeGoal: Goal? { GoalService().activeGoal(from: goals) }
-    private var pastGoals: [Goal] { goals.filter { $0.status != .active } }
+    private var unit: DistanceUnit { users.first?.preferences.distanceUnit ?? .systemDefault }
+    private var completed: [Run] { runs.filter { $0.status == .completed } }
+    private var activeGoal: Goal? { PACEGoals.activeGoal(from: goals) }
+    private var pastGoals: [Goal] { goals.filter { $0.status != .active }.prefix(10).map { $0 } }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: PACESpacing.lg) {
-                    if let goal = activeGoal {
-                        activeGoalCard(goal)
-                    } else {
-                        noGoalPrompt
-                    }
-                    if !pastGoals.isEmpty {
-                        pastGoalsSection
-                    }
-                    suggestionsSection
+        ScrollView {
+            VStack(spacing: PACESpacing.lg) {
+                if let goal = activeGoal {
+                    activeGoalCard(goal)
+                } else {
+                    noGoalCard
                 }
-                .padding(.horizontal, PACESpacing.screenEdge)
-                .padding(.top, PACESpacing.md)
-                .padding(.bottom, PACESpacing.xxxl)
+                if !pastGoals.isEmpty { pastGoalsSection }
+                suggestionsSection
             }
-            .paceBackground()
-            .navigationTitle("Goals")
-            .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showGoalSetup) {
-                GoalSetupView(runs: completedRuns) { newGoal in
-                    context.insert(newGoal)
-                    try? context.save()
-                }
-            }
-            .onAppear { refreshGoalProgress() }
+            .padding(.horizontal, PACESpacing.screenEdge)
+            .padding(.top, PACESpacing.md)
+            .padding(.bottom, PACESpacing.xxxl)
         }
+        .paceBackground()
+        .navigationTitle("Goals")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showSetup) {
+            GoalSetupView { goal in
+                context.insert(goal)
+                try? context.save()
+            }
+        }
+        .onAppear { refreshActive() }
     }
 
-    // MARK: - Active Goal Card
+    // MARK: - Active Goal
 
     private func activeGoalCard(_ goal: Goal) -> some View {
         VStack(spacing: PACESpacing.lg) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(goalTitle(goal))
-                        .font(PACEFonts.body)
-                        .foregroundStyle(PACEColors.textPrimary)
-                    Text(goalPeriod(goal))
-                        .font(PACEFonts.caption)
-                        .foregroundStyle(PACEColors.textSecondary)
+                        .font(PACEFonts.body).foregroundStyle(PACEColors.textPrimary)
+                    Text(period(goal))
+                        .font(PACEFonts.caption).foregroundStyle(PACEColors.textSecondary)
                 }
                 Spacer()
-                Button("Change") { showGoalSetup = true }
-                    .font(PACEFonts.caption)
-                    .foregroundStyle(PACEColors.accentCyan)
+                Button("Change") { showSetup = true }
+                    .font(PACEFonts.caption).foregroundStyle(PACEColors.accentCyan)
             }
 
             HStack(spacing: PACESpacing.xl) {
-                ProgressRing(progress: goal.progress, size: 100, strokeWidth: 10)
+                ProgressRing(progress: goal.progress, size: 96, strokeWidth: 10)
                     .overlay(
                         VStack(spacing: 2) {
                             Text("\(Int(goal.progress * 100))%")
-                                .font(PACEFonts.metricSecondary)
-                                .foregroundStyle(PACEColors.textPrimary)
+                                .font(PACEFonts.metricSecondary).foregroundStyle(PACEColors.textPrimary)
                             Text("done")
-                                .font(PACEFonts.metricLabel)
-                                .foregroundStyle(PACEColors.textSecondary)
-                                .tracking(2)
+                                .font(PACEFonts.metricLabel).foregroundStyle(PACEColors.textSecondary).tracking(2)
                         }
                     )
 
                 VStack(alignment: .leading, spacing: PACESpacing.sm) {
-                    progressDetail("Achieved", value: achievedDisplay(goal))
-                    progressDetail("Target", value: targetDisplay(goal))
-                    progressDetail("Remaining", value: remainingDisplay(goal))
+                    goalRow("Achieved", "\(Int(goal.achievedValue ?? 0)) \(goal.unit.rawValue)")
+                    goalRow("Target", "\(Int(goal.targetValue)) \(goal.unit.rawValue)")
+                    goalRow("Left", "\(max(0, Int(goal.targetValue - (goal.achievedValue ?? 0)))) \(goal.unit.rawValue)")
                 }
             }
         }
@@ -90,26 +80,23 @@ struct GoalsView: View {
         .cornerRadius(PACESpacing.cardCornerRadius)
     }
 
-    private func progressDetail(_ label: String, value: String) -> some View {
+    private func goalRow(_ label: String, _ value: String) -> some View {
         HStack(spacing: PACESpacing.sm) {
             Text(label)
-                .font(PACEFonts.caption)
-                .foregroundStyle(PACEColors.textSecondary)
-                .frame(width: 70, alignment: .leading)
+                .font(PACEFonts.caption).foregroundStyle(PACEColors.textSecondary)
+                .frame(width: 60, alignment: .leading)
             Text(value)
-                .font(PACEFonts.caption)
-                .foregroundStyle(PACEColors.textPrimary)
+                .font(PACEFonts.caption).foregroundStyle(PACEColors.textPrimary)
         }
     }
 
-    // MARK: - No Goal Prompt
+    // MARK: - No Goal
 
-    private var noGoalPrompt: some View {
+    private var noGoalCard: some View {
         VStack(spacing: PACESpacing.md) {
-            Text("Set a weekly target.")
-                .font(PACEFonts.body)
-                .foregroundStyle(PACEColors.textSecondary)
-            PACEPrimaryButton(title: "Set Goal") { showGoalSetup = true }
+            Text("No active goal.")
+                .font(PACEFonts.body).foregroundStyle(PACEColors.textSecondary)
+            PACEPrimaryButton(title: "Set a Goal") { showSetup = true }
         }
         .padding(PACESpacing.xl)
         .frame(maxWidth: .infinity)
@@ -121,62 +108,54 @@ struct GoalsView: View {
 
     private var pastGoalsSection: some View {
         VStack(alignment: .leading, spacing: PACESpacing.sm) {
-            Text("Past Goals")
-                .font(PACEFonts.caption)
-                .foregroundStyle(PACEColors.textSecondary)
-                .padding(.leading, PACESpacing.xs)
+            Text("PAST GOALS")
+                .font(PACEFonts.metricLabel).foregroundStyle(PACEColors.textSecondary).tracking(3)
+                .padding(.leading, 2)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: PACESpacing.sm) {
-                    ForEach(pastGoals.prefix(10)) { goal in
-                        pastGoalBadge(goal)
+            VStack(spacing: 1) {
+                ForEach(pastGoals) { goal in
+                    HStack {
+                        Text(goal.status == .completed ? "✓" : "✗")
+                            .font(PACEFonts.caption)
+                            .foregroundStyle(goal.status == .completed ? PACEColors.success : PACEColors.textSecondary)
+                            .frame(width: 20)
+                        Text(goalTitle(goal))
+                            .font(PACEFonts.caption).foregroundStyle(PACEColors.textPrimary)
+                        Spacer()
+                        Text(PACEFormatter.shortDate(goal.startDate))
+                            .font(PACEFonts.caption).foregroundStyle(PACEColors.textSecondary)
                     }
+                    .padding(.horizontal, PACESpacing.md)
+                    .padding(.vertical, PACESpacing.sm)
+                    .background(PACEColors.surface)
                 }
             }
+            .cornerRadius(PACESpacing.cardCornerRadius)
         }
-    }
-
-    private func pastGoalBadge(_ goal: Goal) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(goalStatusIcon(goal))
-                .font(.system(size: 18))
-            Text(goalTitle(goal))
-                .font(PACEFonts.caption)
-                .foregroundStyle(PACEColors.textPrimary)
-                .lineLimit(2)
-            Text(PACEFormatter.shortDate(goal.startDate))
-                .font(PACEFonts.metricLabel)
-                .foregroundStyle(PACEColors.textSecondary)
-                .tracking(2)
-        }
-        .frame(width: 100)
-        .padding(PACESpacing.sm)
-        .background(PACEColors.surface)
-        .cornerRadius(PACESpacing.cardCornerRadius)
     }
 
     // MARK: - Suggestions
 
     private var suggestionsSection: some View {
-        let suggestions = GoalService().suggestions(existingRuns: completedRuns)
-        return VStack(alignment: .leading, spacing: PACESpacing.sm) {
-            Text("Suggestions")
-                .font(PACEFonts.caption)
-                .foregroundStyle(PACEColors.textSecondary)
-                .padding(.leading, PACESpacing.xs)
+        let suggestions = PACEGoals.suggestions(existingRuns: completed)
+        guard !suggestions.isEmpty else { return AnyView(EmptyView()) }
+
+        return AnyView(VStack(alignment: .leading, spacing: PACESpacing.sm) {
+            Text("SUGGESTIONS")
+                .font(PACEFonts.metricLabel).foregroundStyle(PACEColors.textSecondary).tracking(3)
+                .padding(.leading, 2)
 
             VStack(spacing: 1) {
                 ForEach(suggestions.indices, id: \.self) { i in
                     let s = suggestions[i]
                     Button {
-                        let goal = makeGoal(from: s)
-                        context.insert(goal)
+                        let g = makeGoal(from: s)
+                        context.insert(g)
                         try? context.save()
                     } label: {
                         HStack {
                             Text(s.title)
-                                .font(PACEFonts.body)
-                                .foregroundStyle(PACEColors.textPrimary)
+                                .font(PACEFonts.body).foregroundStyle(PACEColors.textPrimary)
                             Spacer()
                             Image(systemName: "plus")
                                 .font(.system(size: 14, weight: .medium))
@@ -187,86 +166,59 @@ struct GoalsView: View {
                         .background(PACEColors.surface)
                     }
                     .buttonStyle(.plain)
-                    if i < suggestions.count - 1 {
-                        PACESeparator().padding(.leading, PACESpacing.md)
-                    }
                 }
             }
             .cornerRadius(PACESpacing.cardCornerRadius)
-        }
+        })
     }
 
     // MARK: - Helpers
 
     private func goalTitle(_ goal: Goal) -> String {
         switch goal.type {
-        case .weeklyDistance:   return "\(Int(goal.targetValue)) km / week"
-        case .weeklyRunCount:   return "\(Int(goal.targetValue)) runs / week"
-        case .monthlyDistance:  return "\(Int(goal.targetValue)) km / month"
-        default:                return "Custom Goal"
+        case .weeklyDistance:  return "\(Int(goal.targetValue)) km / week"
+        case .weeklyRunCount:  return "\(Int(goal.targetValue)) runs / week"
+        case .monthlyDistance: return "\(Int(goal.targetValue)) km / month"
+        default:               return "Custom Goal"
         }
     }
 
-    private func goalPeriod(_ goal: Goal) -> String {
+    private func period(_ goal: Goal) -> String {
         "\(PACEFormatter.shortDate(goal.startDate)) – \(PACEFormatter.shortDate(goal.endDate))"
     }
 
-    private func achievedDisplay(_ goal: Goal) -> String {
-        "\(Int(goal.achievedValue ?? 0)) \(goal.unit.rawValue)"
-    }
-
-    private func targetDisplay(_ goal: Goal) -> String {
-        "\(Int(goal.targetValue)) \(goal.unit.rawValue)"
-    }
-
-    private func remainingDisplay(_ goal: Goal) -> String {
-        let rem = max(0, goal.targetValue - (goal.achievedValue ?? 0))
-        return "\(Int(rem)) \(goal.unit.rawValue)"
-    }
-
-    private func goalStatusIcon(_ goal: Goal) -> String {
-        switch goal.status {
-        case .completed: return "✓"
-        case .missed:    return "✗"
-        default:         return "○"
-        }
-    }
-
-    private func refreshGoalProgress() {
+    private func refreshActive() {
         guard let goal = activeGoal else { return }
-        GoalService().updateGoalProgress(goal: goal, allRuns: runs, context: context)
+        PACEGoals.updateProgress(goal: goal, allRuns: runs, context: context)
     }
 
-    private func makeGoal(from suggestion: GoalService.GoalSuggestion) -> Goal {
-        switch suggestion.type {
-        case .weeklyDistance:  return Goal.weeklyDistanceGoal(targetKm: suggestion.value)
-        case .weeklyRunCount:  return Goal.weeklyRunCountGoal(targetCount: Int(suggestion.value))
-        case .monthlyDistance: return Goal.monthlyDistanceGoal(targetKm: suggestion.value)
-        default:               return Goal.weeklyDistanceGoal(targetKm: suggestion.value)
+    private func makeGoal(from s: PACEGoals.Suggestion) -> Goal {
+        switch s.type {
+        case .weeklyRunCount:  return Goal.weeklyRunCountGoal(targetCount: Int(s.value))
+        case .monthlyDistance: return Goal.monthlyDistanceGoal(targetKm: s.value)
+        default:               return Goal.weeklyDistanceGoal(targetKm: s.value)
         }
     }
 }
 
-// MARK: - Goal Setup View
+// MARK: - Goal Setup Sheet
 
 struct GoalSetupView: View {
-    let runs: [Run]
     let onSave: (Goal) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedType: GoalType = .weeklyDistance
+    @State private var type: GoalType = .weeklyDistance
     @State private var distanceKm: Double = 30
     @State private var runCount: Double = 3
 
     var body: some View {
         NavigationStack {
             VStack(spacing: PACESpacing.xl) {
-                goalTypePicker
-                goalValuePicker
+                typePicker
+                valuePicker
                 Spacer()
-                PACEPrimaryButton(title: "Save Goal") {
-                    let goal = buildGoal()
-                    onSave(goal)
+                PACEPrimaryButton(title: "Save") {
+                    onSave(build())
                     dismiss()
                 }
                 .padding(.horizontal, PACESpacing.screenEdge)
@@ -279,8 +231,7 @@ struct GoalSetupView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(PACEColors.textSecondary)
+                    Button("Cancel") { dismiss() }.foregroundStyle(PACEColors.textSecondary)
                 }
             }
         }
@@ -288,22 +239,18 @@ struct GoalSetupView: View {
         .presentationBackground(PACEColors.surface)
     }
 
-    private var goalTypePicker: some View {
+    private var typePicker: some View {
         VStack(alignment: .leading, spacing: PACESpacing.sm) {
-            Text("Goal type")
-                .font(PACEFonts.caption)
-                .foregroundStyle(PACEColors.textSecondary)
+            Text("TYPE").font(PACEFonts.metricLabel).foregroundStyle(PACEColors.textSecondary).tracking(3)
             HStack(spacing: PACESpacing.sm) {
-                ForEach([GoalType.weeklyDistance, GoalType.weeklyRunCount, GoalType.monthlyDistance], id: \.self) { type in
-                    Button {
-                        withAnimation { selectedType = type }
-                    } label: {
-                        Text(typeLabel(type))
+                ForEach([GoalType.weeklyDistance, .weeklyRunCount, .monthlyDistance], id: \.self) { t in
+                    Button { withAnimation { type = t } } label: {
+                        Text(typeLabel(t))
                             .font(PACEFonts.caption)
-                            .foregroundStyle(selectedType == type ? PACEColors.textInverse : PACEColors.textSecondary)
+                            .foregroundStyle(type == t ? PACEColors.textInverse : PACEColors.textSecondary)
                             .padding(.horizontal, PACESpacing.sm)
                             .padding(.vertical, PACESpacing.xs + 2)
-                            .background(selectedType == type ? PACEColors.accentCyan : PACEColors.surfaceElevated)
+                            .background(type == t ? PACEColors.accentCyan : PACEColors.surfaceElevated)
                             .cornerRadius(PACESpacing.sm)
                     }
                 }
@@ -311,28 +258,21 @@ struct GoalSetupView: View {
         }
     }
 
-    private var goalValuePicker: some View {
+    private var valuePicker: some View {
         VStack(alignment: .leading, spacing: PACESpacing.sm) {
-            Text("Target")
-                .font(PACEFonts.caption)
-                .foregroundStyle(PACEColors.textSecondary)
-
-            HStack {
-                switch selectedType {
-                case .weeklyDistance, .monthlyDistance:
-                    Text("\(Int(distanceKm)) km")
-                        .font(PACEFonts.statMedium)
-                        .foregroundStyle(PACEColors.accentCyan)
-                    Slider(value: $distanceKm, in: 5...200, step: 5)
-                        .tint(PACEColors.accentCyan)
+            Text("TARGET").font(PACEFonts.metricLabel).foregroundStyle(PACEColors.textSecondary).tracking(3)
+            HStack(spacing: PACESpacing.md) {
+                switch type {
                 case .weeklyRunCount:
                     Text("\(Int(runCount)) runs")
-                        .font(PACEFonts.statMedium)
-                        .foregroundStyle(PACEColors.accentCyan)
-                    Slider(value: $runCount, in: 1...14, step: 1)
-                        .tint(PACEColors.accentCyan)
+                        .font(PACEFonts.statMedium).foregroundStyle(PACEColors.accentCyan)
+                        .frame(width: 90, alignment: .leading)
+                    Slider(value: $runCount, in: 1...14, step: 1).tint(PACEColors.accentCyan)
                 default:
-                    EmptyView()
+                    Text("\(Int(distanceKm)) km")
+                        .font(PACEFonts.statMedium).foregroundStyle(PACEColors.accentCyan)
+                        .frame(width: 90, alignment: .leading)
+                    Slider(value: $distanceKm, in: 5...200, step: 5).tint(PACEColors.accentCyan)
                 }
             }
             .padding(PACESpacing.md)
@@ -341,8 +281,8 @@ struct GoalSetupView: View {
         }
     }
 
-    private func typeLabel(_ type: GoalType) -> String {
-        switch type {
+    private func typeLabel(_ t: GoalType) -> String {
+        switch t {
         case .weeklyDistance:  return "Weekly km"
         case .weeklyRunCount:  return "Weekly runs"
         case .monthlyDistance: return "Monthly km"
@@ -350,11 +290,11 @@ struct GoalSetupView: View {
         }
     }
 
-    private func buildGoal() -> Goal {
-        switch selectedType {
-        case .weeklyRunCount: return Goal.weeklyRunCountGoal(targetCount: Int(runCount))
+    private func build() -> Goal {
+        switch type {
+        case .weeklyRunCount:  return Goal.weeklyRunCountGoal(targetCount: Int(runCount))
         case .monthlyDistance: return Goal.monthlyDistanceGoal(targetKm: distanceKm)
-        default: return Goal.weeklyDistanceGoal(targetKm: distanceKm)
+        default:               return Goal.weeklyDistanceGoal(targetKm: distanceKm)
         }
     }
 }

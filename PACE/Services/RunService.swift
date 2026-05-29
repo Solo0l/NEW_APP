@@ -1,28 +1,20 @@
 import Foundation
 import SwiftData
-import Combine
-
-// MARK: - Run State Machine
-
-enum RunPhase: Equatable {
-    case idle
-    case countdown(secondsRemaining: Int)
-    case active
-    case paused
-    case ended(run: Run)
-}
 
 // MARK: - RunService
+// Single source of truth for the active run state machine.
+// @Observable only — no ObservableObject conformance.
 
 @Observable
 @MainActor
-final class RunService: ObservableObject {
+final class RunService {
 
-    // MARK: - Phase & Metrics
+    // MARK: - Phase
 
     var phase: RunPhase = .idle
 
-    // Live metrics (mirrors LocationManager, exposed for views)
+    // MARK: - Live Metrics (read by views)
+
     var currentPaceSecondsPerMeter: Double = 0
     var distanceMeters: Double = 0
     var elapsedTime: TimeInterval = 0
@@ -36,8 +28,9 @@ final class RunService: ObservableObject {
     var lapDistanceMeters: Double = 0
     var lapStartTime: Date = .now
     var completedSplits: [SplitSnapshot] = []
+    var lapIntervalMeters: Double? = nil
 
-    // Run-level goal (set before start)
+    // Per-run goal
     var activeGoalType: GoalType?
     var activeGoalValueMeters: Double?
     var activeGoalValueSeconds: Double?
@@ -48,17 +41,14 @@ final class RunService: ObservableObject {
     private let healthKitManager: HealthKitManager
     private let modelContext: ModelContext
 
-    private var activeRun: Run?
+    private var activeRunID: UUID?
     private var countdownTimer: Timer?
     private var elapsedTimer: Timer?
-    private var lapIntervalMeters: Double?
+    private var metricsTimer: Timer?
 
-    // Elapsed time tracking (paused time excluded)
     private var runStartTime: Date?
     private var pauseStartTime: Date?
     private var totalPausedTime: TimeInterval = 0
-
-    // HR snapshot buffer
     private var hrBuffer: [Double] = []
     private var lapHRBuffer: [Double] = []
 
@@ -76,60 +66,62 @@ final class RunService: ObservableObject {
         guard case .idle = phase else { return }
         lapIntervalMeters = lapInterval.meters
         locationManager.startTracking()
-        beginCountdown(from: 3)
+        countdown(from: 3)
     }
 
     func pauseRun() {
         guard case .active = phase else { return }
         pauseStartTime = .now
         locationManager.pauseTracking()
-        stopElapsedTimer()
+        stopTimers()
         phase = .paused
     }
 
     func resumeRun() {
         guard case .paused = phase else { return }
-        if let pauseStart = pauseStartTime {
-            totalPausedTime += Date.now.timeIntervalSince(pauseStart)
+        if let ps = pauseStartTime {
+            totalPausedTime += Date.now.timeIntervalSince(ps)
         }
         pauseStartTime = nil
         locationManager.resumeTracking()
         startElapsedTimer()
+        startMetricsTimer()
         phase = .active
     }
 
     func markLap() {
         guard case .active = phase else { return }
         let now = Date.now
-        let split = SplitSnapshot(
+        let lapTime = now.timeIntervalSince(lapStartTime)
+        let snapshot = SplitSnapshot(
             index: currentLapIndex,
             startDate: lapStartTime,
             endDate: now,
             distanceMeters: lapDistanceMeters,
-            activeDuration: now.timeIntervalSince(lapStartTime),
-            paceSecondsPerMeter: lapDistanceMeters > 0 ? now.timeIntervalSince(lapStartTime) / lapDistanceMeters : 0,
-            averageHeartRate: lapHRBuffer.isEmpty ? nil : lapHRBuffer.reduce(0, +) / Double(lapHRBuffer.count)
+            activeDuration: lapTime,
+            paceSecondsPerMeter: lapDistanceMeters > 0 ? lapTime / lapDistanceMeters : 0,
+            averageHeartRate: lapHRBuffer.average
         )
-        completedSplits.append(split)
+        completedSplits.append(snapshot)
         currentLapIndex += 1
         lapDistanceMeters = 0
         lapStartTime = now
         lapHRBuffer = []
-        locationManager.resetLapState()
     }
 
-    func endRun() {
-        guard case .active = phase, let run = activeRun else {
-            if case .paused = phase, let run = activeRun {
-                finalizeRun(run)
-            }
-            return
+    func finishRun() {
+        switch phase {
+        case .active, .paused:
+            finalizeRun()
+        default:
+            break
         }
-        finalizeRun(run)
     }
 
-    func discardRun() {
-        cleanup()
+    func discardAndReset() {
+        stopTimers()
+        locationManager.stopTracking()
+        resetState()
         phase = .idle
     }
 
@@ -147,18 +139,18 @@ final class RunService: ObservableObject {
 
     // MARK: - Private: Countdown
 
-    private func beginCountdown(from count: Int) {
+    private func countdown(from count: Int) {
         phase = .countdown(secondsRemaining: count)
         var remaining = count
         countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-            guard let self else { timer.invalidate(); return }
             remaining -= 1
             if remaining > 0 {
-                self.phase = .countdown(secondsRemaining: remaining)
+                Task { @MainActor [weak self] in
+                    self?.phase = .countdown(secondsRemaining: remaining)
+                }
             } else {
                 timer.invalidate()
-                self.countdownTimer = nil
-                Task { @MainActor in self.beginActiveRun() }
+                Task { @MainActor [weak self] in self?.beginActiveRun() }
             }
         }
     }
@@ -169,7 +161,12 @@ final class RunService: ObservableObject {
         run.goalValueMeters = activeGoalValueMeters
         run.goalValueSeconds = activeGoalValueSeconds
         modelContext.insert(run)
-        activeRun = run
+        do {
+            try modelContext.save()
+        } catch {
+            // Run record created in-memory even if initial save fails
+        }
+        activeRunID = run.id
 
         runStartTime = .now
         totalPausedTime = 0
@@ -182,7 +179,7 @@ final class RunService: ObservableObject {
 
         healthKitManager.beginWorkout()
         startElapsedTimer()
-        startMetricsPolling()
+        startMetricsTimer()
         phase = .active
     }
 
@@ -191,67 +188,60 @@ final class RunService: ObservableObject {
     private func startElapsedTimer() {
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self, let start = self.runStartTime else { return }
-            let raw = Date.now.timeIntervalSince(start)
-            self.elapsedTime = max(0, raw - self.totalPausedTime)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.elapsedTime = max(0, Date.now.timeIntervalSince(start) - self.totalPausedTime)
+            }
         }
     }
 
-    private func stopElapsedTimer() {
-        elapsedTimer?.invalidate()
-        elapsedTimer = nil
-    }
-
-    // MARK: - Private: Metrics Polling
-
-    private var metricsPollingTimer: Timer?
-
-    private func startMetricsPolling() {
-        metricsPollingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.syncFromLocationManager()
-            self.checkAutomaticLap()
-            self.updateGoalPaceIndicator()
+    private func startMetricsTimer() {
+        metricsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.syncMetrics() }
         }
     }
 
-    private func syncFromLocationManager() {
+    private func stopTimers() {
+        countdownTimer?.invalidate(); countdownTimer = nil
+        elapsedTimer?.invalidate(); elapsedTimer = nil
+        metricsTimer?.invalidate(); metricsTimer = nil
+    }
+
+    // MARK: - Private: Metrics Sync
+
+    private func syncMetrics() {
         currentPaceSecondsPerMeter = locationManager.currentPaceSecondsPerMeter
         distanceMeters = locationManager.totalDistanceMeters
         elevationGain = locationManager.elevationGainMeters
         gpsAccuracy = locationManager.gpsAccuracy
 
-        // Lap tracking
-        let previousLapTotal = completedSplits.reduce(0) { $0 + $1.distanceMeters }
-        lapDistanceMeters = max(0, distanceMeters - previousLapTotal)
+        let splitTotal = completedSplits.reduce(0) { $0 + $1.distanceMeters }
+        lapDistanceMeters = max(0, distanceMeters - splitTotal)
 
-        // HR from HealthKit live stream
         if let hr = healthKitManager.latestHeartRate {
             currentHeartRate = hr
             hrBuffer.append(hr)
             lapHRBuffer.append(hr)
         }
+
+        checkAutoLap()
+        updateGoalPaceIndicator()
     }
 
-    private func checkAutomaticLap() {
-        guard let interval = lapIntervalMeters, interval > 0 else { return }
-        if lapDistanceMeters >= interval {
-            markLap()
-        }
+    private func checkAutoLap() {
+        guard let interval = lapIntervalMeters, interval > 0,
+              lapDistanceMeters >= interval else { return }
+        markLap()
     }
 
     private func updateGoalPaceIndicator() {
-        guard let goalType = activeGoalType else {
-            isAtGoalPace = nil
-            return
-        }
-        switch goalType {
+        switch activeGoalType {
         case .singleRunDistance:
-            guard let targetMeters = activeGoalValueMeters, targetMeters > 0 else { return }
-            // At goal if projected finish time is within 5% of a comfortable pace
-            isAtGoalPace = distanceMeters <= targetMeters
+            guard let t = activeGoalValueMeters, t > 0 else { isAtGoalPace = nil; return }
+            isAtGoalPace = distanceMeters <= t
         case .singleRunTime:
-            guard let targetSeconds = activeGoalValueSeconds, targetSeconds > 0 else { return }
-            isAtGoalPace = elapsedTime <= targetSeconds
+            guard let t = activeGoalValueSeconds, t > 0 else { isAtGoalPace = nil; return }
+            isAtGoalPace = elapsedTime <= t
         default:
             isAtGoalPace = nil
         }
@@ -259,11 +249,22 @@ final class RunService: ObservableObject {
 
     // MARK: - Private: Finalize
 
-    private func finalizeRun(_ run: Run) {
-        stopElapsedTimer()
-        metricsPollingTimer?.invalidate()
-        metricsPollingTimer = nil
+    private func finalizeRun() {
+        stopTimers()
         locationManager.stopTracking()
+
+        guard let runID = activeRunID else {
+            resetState()
+            phase = .idle
+            return
+        }
+
+        let fetchDescriptor = FetchDescriptor<Run>(predicate: #Predicate { $0.id == runID })
+        guard let run = (try? modelContext.fetch(fetchDescriptor))?.first else {
+            resetState()
+            phase = .idle
+            return
+        }
 
         let now = Date.now
         run.endDate = now
@@ -273,69 +274,58 @@ final class RunService: ObservableObject {
         run.distanceMeters = distanceMeters
         run.elevationGainMeters = elevationGain
         run.elevationLossMeters = locationManager.elevationLossMeters
+        run.route = locationManager.routeCoordinates
 
         if distanceMeters > 0, elapsedTime > 0 {
             run.averagePaceSecondsPerMeter = elapsedTime / distanceMeters
         }
-        if currentPaceSecondsPerMeter > 0 {
-            let allPaces = completedSplits.map(\.paceSecondsPerMeter).filter { $0 > 0 }
-            run.bestPaceSecondsPerMeter = allPaces.min() ?? currentPaceSecondsPerMeter
-        }
+
+        let allSplitPaces = completedSplits.map(\.paceSecondsPerMeter).filter { $0 > 0 }
+        run.bestPaceSecondsPerMeter = allSplitPaces.min() ?? run.averagePaceSecondsPerMeter
 
         if !hrBuffer.isEmpty {
-            run.averageHeartRate = hrBuffer.reduce(0, +) / Double(hrBuffer.count)
+            run.averageHeartRate = hrBuffer.average
             run.maxHeartRate = hrBuffer.max()
         }
 
-        run.route = locationManager.routeCoordinates
-
-        // Persist completed splits
-        for s in completedSplits {
+        for snapshot in completedSplits {
             let split = Split(
-                index: s.index,
-                startDate: s.startDate,
-                endDate: s.endDate,
-                distanceMeters: s.distanceMeters,
-                activeDuration: s.activeDuration,
-                paceSecondsPerMeter: s.paceSecondsPerMeter,
-                averageHeartRate: s.averageHeartRate,
-                elevationGainMeters: s.elevationGainMeters
+                index: snapshot.index, startDate: snapshot.startDate, endDate: snapshot.endDate,
+                distanceMeters: snapshot.distanceMeters, activeDuration: snapshot.activeDuration,
+                paceSecondsPerMeter: snapshot.paceSecondsPerMeter, averageHeartRate: snapshot.averageHeartRate
             )
             split.run = run
             modelContext.insert(split)
         }
 
-        // Final lap if partial
-        let finalLapDist = lapDistanceMeters
-        if finalLapDist > 50 {  // Only record if >50m into the lap
+        // Final partial lap (only if meaningful distance covered)
+        if lapDistanceMeters > 50 {
+            let lapTime = now.timeIntervalSince(lapStartTime)
             let finalSplit = Split(
-                index: currentLapIndex,
-                startDate: lapStartTime,
-                endDate: now,
-                distanceMeters: finalLapDist,
-                activeDuration: now.timeIntervalSince(lapStartTime),
-                paceSecondsPerMeter: finalLapDist > 0 ? now.timeIntervalSince(lapStartTime) / finalLapDist : 0,
-                averageHeartRate: lapHRBuffer.isEmpty ? nil : lapHRBuffer.reduce(0, +) / Double(lapHRBuffer.count)
+                index: currentLapIndex, startDate: lapStartTime, endDate: now,
+                distanceMeters: lapDistanceMeters, activeDuration: lapTime,
+                paceSecondsPerMeter: lapDistanceMeters > 0 ? lapTime / lapDistanceMeters : 0,
+                averageHeartRate: lapHRBuffer.average
             )
             finalSplit.run = run
             modelContext.insert(finalSplit)
         }
 
-        try? modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            // Run is still in the context in-memory; user won't lose data this session
+        }
 
         healthKitManager.endWorkout(run: run)
-        cleanup()
-        phase = .ended(run: run)
+
+        let completedID = runID
+        resetState()
+        phase = .ended(runID: completedID)
     }
 
-    private func cleanup() {
-        countdownTimer?.invalidate()
-        countdownTimer = nil
-        stopElapsedTimer()
-        metricsPollingTimer?.invalidate()
-        metricsPollingTimer = nil
-
-        activeRun = nil
+    private func resetState() {
+        activeRunID = nil
         runStartTime = nil
         pauseStartTime = nil
         totalPausedTime = 0
@@ -344,13 +334,16 @@ final class RunService: ObservableObject {
         currentPaceSecondsPerMeter = 0
         elevationGain = 0
         lapDistanceMeters = 0
+        currentLapIndex = 0
         completedSplits = []
         hrBuffer = []
         lapHRBuffer = []
+        currentHeartRate = nil
+        isAtGoalPace = nil
     }
 }
 
-// MARK: - SplitSnapshot (in-memory, before persisting)
+// MARK: - SplitSnapshot
 
 struct SplitSnapshot {
     var index: Int
@@ -361,4 +354,12 @@ struct SplitSnapshot {
     var paceSecondsPerMeter: Double
     var averageHeartRate: Double?
     var elevationGainMeters: Double?
+}
+
+// MARK: - Array<Double> helper
+
+private extension Array where Element == Double {
+    var average: Double? {
+        isEmpty ? nil : reduce(0, +) / Double(count)
+    }
 }

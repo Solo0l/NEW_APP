@@ -25,6 +25,10 @@ enum DistanceUnit: String, Codable, CaseIterable {
         case .miles: return 1609.344
         }
     }
+
+    static var systemDefault: DistanceUnit {
+        Locale.current.measurementSystem == .metric ? .kilometers : .miles
+    }
 }
 
 // MARK: - Goal
@@ -113,11 +117,7 @@ enum LapInterval: String, Codable, CaseIterable {
 // MARK: - HR Zone
 
 enum HeartRateZone: Int, CaseIterable {
-    case zone1 = 1
-    case zone2
-    case zone3
-    case zone4
-    case zone5
+    case zone1 = 1, zone2, zone3, zone4, zone5
 
     var name: String {
         switch self {
@@ -129,25 +129,14 @@ enum HeartRateZone: Int, CaseIterable {
         }
     }
 
-    // Percent of max HR
     var lowerBound: Double {
-        switch self {
-        case .zone1: return 0.50
-        case .zone2: return 0.60
-        case .zone3: return 0.70
-        case .zone4: return 0.80
-        case .zone5: return 0.90
-        }
+        switch self { case .zone1: return 0.50; case .zone2: return 0.60
+            case .zone3: return 0.70; case .zone4: return 0.80; case .zone5: return 0.90 }
     }
 
     var upperBound: Double {
-        switch self {
-        case .zone1: return 0.60
-        case .zone2: return 0.70
-        case .zone3: return 0.80
-        case .zone4: return 0.90
-        case .zone5: return 1.00
-        }
+        switch self { case .zone1: return 0.60; case .zone2: return 0.70
+            case .zone3: return 0.80; case .zone4: return 0.90; case .zone5: return 1.00 }
     }
 
     static func zone(for heartRate: Double, maxHeartRate: Double) -> HeartRateZone {
@@ -159,27 +148,33 @@ enum HeartRateZone: Int, CaseIterable {
 // MARK: - GPS Accuracy
 
 enum GPSAccuracy {
-    case acquiring
-    case poor
-    case fair
-    case good
+    case acquiring, poor, fair, good
 
     init(horizontalAccuracy: Double) {
         switch horizontalAccuracy {
-        case ..<0:       self = .acquiring
-        case 0..<10:     self = .good
-        case 10..<25:    self = .fair
-        default:         self = .poor
+        case ..<0:    self = .acquiring
+        case 0..<10:  self = .good
+        case 10..<25: self = .fair
+        default:      self = .poor
         }
     }
 
     var isUsable: Bool { self != .acquiring }
 }
 
-// MARK: - Run Metric Set
+// MARK: - Active Run Metric Set (2 sets only)
 
 enum MetricSet: Int, CaseIterable {
-    case primary    // Current pace | Distance | Time | HR
-    case secondary  // Avg pace | Current HR | Elevation
-    case laps       // Lap pace | Lap distance | Lap count
+    case primary    // current pace | distance | time | hr
+    case secondary  // avg pace | best pace | elevation
+}
+
+// MARK: - Run Phase (shared between iOS and Watch)
+
+enum RunPhase: Equatable {
+    case idle
+    case countdown(secondsRemaining: Int)
+    case active
+    case paused
+    case ended(runID: UUID)  // Use ID, not object, for cross-target sharing
 }

@@ -1,41 +1,29 @@
 import SwiftUI
 
 struct PreRunConfigView: View {
-    // Callback: lapInterval, goalType (optional), goalMeters (optional), goalSeconds (optional)
     let onStart: (LapInterval, GoalType?, Double?, Double?) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedGoal: GoalOption = .none
+    @State private var goal: GoalMode = .none
     @State private var lapInterval: LapInterval = .oneKilometer
     @State private var distanceKm: Double = 5
     @State private var durationMinutes: Double = 30
-    @State private var showAdvanced = false
 
-    enum GoalOption: Equatable {
-        case none, distance, time
-    }
+    enum GoalMode: Equatable { case none, distance, time }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: PACESpacing.xl) {
                 goalSelector
-                if selectedGoal == .distance { distancePicker }
-                if selectedGoal == .time { timePicker }
-
+                if goal == .distance { distancePicker }
+                if goal == .time { timePicker }
+                lapPicker
                 Spacer()
-
-                if showAdvanced { advancedSettings }
-
-                VStack(spacing: PACESpacing.sm) {
-                    PACEPrimaryButton(title: "Start Run") { startRun() }
-                    Button("Advanced ↓") { withAnimation { showAdvanced.toggle() } }
-                        .font(PACEFonts.caption)
-                        .foregroundStyle(PACEColors.textSecondary)
-                }
+                PACEPrimaryButton(title: "Start Run") { commit() }
             }
             .padding(PACESpacing.screenEdge)
             .paceBackground()
-            .navigationTitle("Set Up Run")
+            .navigationTitle("Before You Run")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -44,118 +32,90 @@ struct PreRunConfigView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium])
         .presentationBackground(PACEColors.surface)
         .presentationDragIndicator(.visible)
     }
 
-    // MARK: - Goal Selector
-
     private var goalSelector: some View {
-        HStack(spacing: PACESpacing.sm) {
-            GoalChip(title: "No Goal", isSelected: selectedGoal == .none) { selectedGoal = .none }
-            GoalChip(title: "Distance", isSelected: selectedGoal == .distance) { selectedGoal = .distance }
-            GoalChip(title: "Time", isSelected: selectedGoal == .time) { selectedGoal = .time }
+        VStack(alignment: .leading, spacing: PACESpacing.sm) {
+            Text("GOAL")
+                .font(PACEFonts.metricLabel)
+                .foregroundStyle(PACEColors.textSecondary)
+                .tracking(3)
+            HStack(spacing: PACESpacing.sm) {
+                modeChip("None", mode: .none)
+                modeChip("Distance", mode: .distance)
+                modeChip("Time", mode: .time)
+                Spacer()
+            }
         }
     }
 
-    // MARK: - Distance Picker
+    private func modeChip(_ label: String, mode: GoalMode) -> some View {
+        Button { withAnimation(.easeInOut(duration: 0.15)) { goal = mode } } label: {
+            Text(label)
+                .font(PACEFonts.body)
+                .foregroundStyle(goal == mode ? PACEColors.textInverse : PACEColors.textSecondary)
+                .padding(.horizontal, PACESpacing.md)
+                .padding(.vertical, PACESpacing.sm)
+                .background(goal == mode ? PACEColors.accentCyan : PACEColors.surfaceElevated)
+                .cornerRadius(PACESpacing.sm)
+        }
+    }
 
     private var distancePicker: some View {
         VStack(alignment: .leading, spacing: PACESpacing.sm) {
-            Text("Target Distance")
-                .font(PACEFonts.caption)
+            Text("DISTANCE")
+                .font(PACEFonts.metricLabel)
                 .foregroundStyle(PACEColors.textSecondary)
-            HStack {
+                .tracking(3)
+            HStack(spacing: PACESpacing.md) {
                 Text("\(Int(distanceKm)) km")
                     .font(PACEFonts.statMedium)
                     .foregroundStyle(PACEColors.accentCyan)
+                    .frame(width: 72, alignment: .leading)
                 Slider(value: $distanceKm, in: 1...42, step: 1)
                     .tint(PACEColors.accentCyan)
             }
         }
-        .padding(PACESpacing.md)
-        .background(PACEColors.surfaceElevated)
-        .cornerRadius(PACESpacing.cardCornerRadius)
     }
-
-    // MARK: - Time Picker
 
     private var timePicker: some View {
         VStack(alignment: .leading, spacing: PACESpacing.sm) {
-            Text("Target Duration")
-                .font(PACEFonts.caption)
+            Text("DURATION")
+                .font(PACEFonts.metricLabel)
                 .foregroundStyle(PACEColors.textSecondary)
-            HStack {
+                .tracking(3)
+            HStack(spacing: PACESpacing.md) {
                 Text("\(Int(durationMinutes)) min")
                     .font(PACEFonts.statMedium)
                     .foregroundStyle(PACEColors.accentCyan)
+                    .frame(width: 72, alignment: .leading)
                 Slider(value: $durationMinutes, in: 5...180, step: 5)
                     .tint(PACEColors.accentCyan)
             }
         }
-        .padding(PACESpacing.md)
-        .background(PACEColors.surfaceElevated)
-        .cornerRadius(PACESpacing.cardCornerRadius)
     }
 
-    // MARK: - Advanced Settings
-
-    private var advancedSettings: some View {
-        VStack(alignment: .leading, spacing: PACESpacing.md) {
-            PACESeparator()
-            Text("Advanced")
-                .font(PACEFonts.caption)
+    private var lapPicker: some View {
+        VStack(alignment: .leading, spacing: PACESpacing.sm) {
+            Text("LAP ALERT")
+                .font(PACEFonts.metricLabel)
                 .foregroundStyle(PACEColors.textSecondary)
-
-            VStack(spacing: PACESpacing.sm) {
-                HStack {
-                    Text("Split alert")
-                        .font(PACEFonts.body)
-                        .foregroundStyle(PACEColors.textPrimary)
-                    Spacer()
-                    Picker("Split", selection: $lapInterval) {
-                        ForEach(LapInterval.allCases, id: \.self) { interval in
-                            Text(interval.displayName).tag(interval)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(PACEColors.accentCyan)
-                }
+                .tracking(3)
+            Picker("Lap Alert", selection: $lapInterval) {
+                ForEach(LapInterval.allCases, id: \.self) { i in Text(i.displayName).tag(i) }
             }
+            .pickerStyle(.segmented)
         }
     }
 
-    // MARK: - Start Action
-
-    private func startRun() {
-        switch selectedGoal {
-        case .none:
-            onStart(lapInterval, nil, nil, nil)
-        case .distance:
-            onStart(lapInterval, .singleRunDistance, distanceKm * 1000, nil)
-        case .time:
-            onStart(lapInterval, .singleRunTime, nil, durationMinutes * 60)
-        }
-    }
-}
-
-// MARK: - Goal Chip
-
-private struct GoalChip: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(PACEFonts.body)
-                .foregroundStyle(isSelected ? PACEColors.textInverse : PACEColors.textSecondary)
-                .padding(.horizontal, PACESpacing.md)
-                .padding(.vertical, PACESpacing.sm)
-                .background(isSelected ? PACEColors.accentCyan : PACEColors.surfaceElevated)
-                .cornerRadius(PACESpacing.sm)
+    private func commit() {
+        switch goal {
+        case .none:     onStart(lapInterval, nil, nil, nil)
+        case .distance: onStart(lapInterval, .singleRunDistance, distanceKm * 1000, nil)
+        case .time:     onStart(lapInterval, .singleRunTime, nil, durationMinutes * 60)
         }
     }
 }

@@ -1,174 +1,143 @@
 import Foundation
 import CoreLocation
-import Combine
+
+// @Observable — all property mutations dispatched to main thread from delegate callbacks.
 
 @Observable
 final class LocationManager: NSObject {
 
-    // MARK: - Published State
+    // MARK: - Published State (main thread only)
 
     var authorizationStatus: CLAuthorizationStatus = .notDetermined
     var currentLocation: CLLocation?
     var gpsAccuracy: GPSAccuracy = .acquiring
 
-    // Live metrics (updated on every GPS fix)
-    var rawSpeedMetersPerSecond: Double = 0  // instantaneous, noisy
-    var currentPaceSecondsPerMeter: Double = 0  // smoothed rolling average
+    // Smoothed metrics
+    var currentPaceSecondsPerMeter: Double = 0
     var totalDistanceMeters: Double = 0
     var elevationGainMeters: Double = 0
     var elevationLossMeters: Double = 0
 
-    // Route
     private(set) var routeCoordinates: [CLLocationCoordinate2D] = []
 
-    // MARK: - Private State
+    // MARK: - Private
 
-    private let locationManager = CLLocationManager()
+    private let manager = CLLocationManager()
     private var isTracking = false
     private var lastLocation: CLLocation?
     private var lastRecordedLocation: CLLocation?
-
-    // Rolling pace window: last N seconds of speed samples
-    private var paceWindow: [(timestamp: Date, speed: Double)] = []
-    private let paceWindowSeconds: TimeInterval = 10
-
-    // Elevation
     private var lastAltitude: Double?
 
-    // Minimum distance between recorded route points (reduces noise)
-    private let minRoutePointDistance: CLLocationDistance = 5.0
+    // Pace: 10-second rolling window of (timestamp, speed) pairs
+    private var paceWindow: [(timestamp: Date, speed: Double)] = []
+    private let paceWindowDuration: TimeInterval = 10
+    private let minRouteSpacing: CLLocationDistance = 5.0
 
     // MARK: - Init
 
     override init() {
         super.init()
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 2.0  // update every 2 meters
-        locationManager.activityType = .fitness
-        locationManager.pausesLocationUpdatesAutomatically = false
-        locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.showsBackgroundLocationIndicator = true
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.distanceFilter = 2.0
+        manager.activityType = .fitness
+        manager.pausesLocationUpdatesAutomatically = false
+        if Bundle.main.object(forInfoDictionaryKey: "NSLocationAlwaysAndWhenInUseUsageDescription") != nil {
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+        }
     }
 
     // MARK: - Permissions
 
     func requestPermission() {
-        locationManager.requestWhenInUseAuthorization()
+        manager.requestWhenInUseAuthorization()
     }
 
-    func requestAlwaysPermission() {
-        locationManager.requestAlwaysAuthorization()
-    }
-
-    // MARK: - Tracking Control
+    // MARK: - Tracking
 
     func startTracking() {
         guard !isTracking else { return }
         isTracking = true
-        resetTrackingState()
-        locationManager.startUpdatingLocation()
+        reset()
+        manager.startUpdatingLocation()
     }
 
     func stopTracking() {
-        guard isTracking else { return }
         isTracking = false
-        locationManager.stopUpdatingLocation()
+        manager.stopUpdatingLocation()
     }
 
     func pauseTracking() {
-        locationManager.stopUpdatingLocation()
-        // Keep isTracking = true so state is preserved
+        manager.stopUpdatingLocation()
         lastLocation = nil  // Prevent distance jump on resume
     }
 
     func resumeTracking() {
         lastLocation = nil
-        locationManager.startUpdatingLocation()
+        manager.startUpdatingLocation()
     }
 
-    // MARK: - Manual Lap Reset
+    func resetLapState() {}
 
-    func resetLapState() {
-        // Called by RunService when a lap is marked
-        // (doesn't reset total distance, only lap-level state in RunService)
-    }
+    // MARK: - Private
 
-    // MARK: - Private Helpers
-
-    private func resetTrackingState() {
+    private func reset() {
         routeCoordinates = []
         totalDistanceMeters = 0
         elevationGainMeters = 0
         elevationLossMeters = 0
         currentPaceSecondsPerMeter = 0
-        rawSpeedMetersPerSecond = 0
         paceWindow = []
         lastLocation = nil
         lastRecordedLocation = nil
         lastAltitude = nil
     }
 
-    private func processLocation(_ location: CLLocation) {
+    private func process(_ location: CLLocation) {
         let accuracy = GPSAccuracy(horizontalAccuracy: location.horizontalAccuracy)
+
+        // Reject unusable or very noisy fixes
+        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy < 50 else {
+            gpsAccuracy = .poor
+            return
+        }
+
         gpsAccuracy = accuracy
 
-        // Don't process inaccurate fixes
-        guard accuracy.isUsable, location.horizontalAccuracy < 50 else { return }
-
-        // Distance
+        // Accumulate distance
         if let last = lastLocation {
             let delta = location.distance(from: last)
-            if delta > 0 {
-                totalDistanceMeters += delta
-            }
+            if delta > 0 { totalDistanceMeters += delta }
         }
 
         // Elevation
-        let alt = location.altitude
         if let lastAlt = lastAltitude {
-            let diff = alt - lastAlt
-            if diff > 0.5 {
-                elevationGainMeters += diff
-            } else if diff < -0.5 {
-                elevationLossMeters += abs(diff)
-            }
+            let diff = location.altitude - lastAlt
+            if diff > 0.5 { elevationGainMeters += diff }
+            else if diff < -0.5 { elevationLossMeters += abs(diff) }
         }
-        lastAltitude = alt
+        lastAltitude = location.altitude
 
-        // Speed + rolling pace
-        let speed = max(location.speed, 0)  // speed < 0 means invalid
-        rawSpeedMetersPerSecond = speed
-        updateRollingPace(speed: speed, at: location.timestamp)
+        // Rolling pace
+        let speed = max(0, location.speed)
+        paceWindow.append((location.timestamp, speed))
+        let cutoff = location.timestamp.addingTimeInterval(-paceWindowDuration)
+        paceWindow.removeAll { $0.timestamp < cutoff }
+        let avgSpeed = paceWindow.map(\.speed).reduce(0, +) / Double(paceWindow.count)
+        if avgSpeed > 0.1 { currentPaceSecondsPerMeter = 1.0 / avgSpeed }
 
-        // Route point
-        if let lastRecorded = lastRecordedLocation {
-            if location.distance(from: lastRecorded) >= minRoutePointDistance {
-                routeCoordinates.append(location.coordinate)
-                lastRecordedLocation = location
-            }
-        } else {
+        // Route
+        let shouldRecord = lastRecordedLocation.map {
+            location.distance(from: $0) >= minRouteSpacing
+        } ?? true
+        if shouldRecord {
             routeCoordinates.append(location.coordinate)
             lastRecordedLocation = location
         }
 
         lastLocation = location
         currentLocation = location
-    }
-
-    private func updateRollingPace(speed: Double, at timestamp: Date) {
-        paceWindow.append((timestamp: timestamp, speed: speed))
-
-        // Trim old samples
-        let cutoff = timestamp.addingTimeInterval(-paceWindowSeconds)
-        paceWindow.removeAll { $0.timestamp < cutoff }
-
-        guard !paceWindow.isEmpty else { return }
-
-        let averageSpeed = paceWindow.map(\.speed).reduce(0, +) / Double(paceWindow.count)
-        if averageSpeed > 0.1 {  // ~0.36 km/h minimum to avoid nonsense pace
-            currentPaceSecondsPerMeter = 1.0 / averageSpeed
-        }
     }
 }
 
@@ -177,22 +146,27 @@ final class LocationManager: NSObject {
 extension LocationManager: CLLocationManagerDelegate {
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        authorizationStatus = manager.authorizationStatus
+        // Delegate can call on any thread — dispatch to main
+        DispatchQueue.main.async { [weak self] in
+            self?.authorizationStatus = manager.authorizationStatus
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard isTracking else { return }
-        // Use the most recent valid fix
         let validLocations = locations.filter { $0.horizontalAccuracy >= 0 }
         guard let latest = validLocations.last else { return }
-        processLocation(latest)
+        DispatchQueue.main.async { [weak self] in
+            self?.process(latest)
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        let clError = error as? CLError
-        if clError?.code == .denied {
-            authorizationStatus = .denied
+        DispatchQueue.main.async { [weak self] in
+            if let clError = error as? CLError, clError.code == .denied {
+                self?.authorizationStatus = .denied
+            }
+            // GPS signal failures are transient; accuracy state already reflects the gap
         }
-        // Other errors (network unavailable, etc.) are transient — GPS will recover
     }
 }

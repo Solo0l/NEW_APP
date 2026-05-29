@@ -11,24 +11,25 @@ struct RunSummaryView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showFullMap = false
-    @State private var showShareSheet = false
     @State private var showDeleteAlert = false
     @State private var showSplits = false
 
-    private var unit: DistanceUnit { users.first?.preferences.distanceUnit ?? .kilometers }
-    private var insight: RunInsight? {
-        AnalyticsEngine().insight(for: run, allRuns: allRuns)
+    private var unit: DistanceUnit { users.first?.preferences.distanceUnit ?? .systemDefault }
+    private var maxHR: Double { users.first?.preferences.estimatedMaxHeartRate ?? 190 }
+    private var insight: PACEAnalytics.RunInsight? {
+        PACEAnalytics.insight(for: run, allRuns: allRuns)
     }
 
     var body: some View {
         ScrollView {
             VStack(spacing: PACESpacing.lg) {
+                // Insight leads — it's the most motivating data
+                if let insight { insightCard(insight) }
                 headerSection
                 mapCard
-                if let insight { insightCard(insight) }
                 statsGrid
                 if !run.splits.isEmpty { splitsSection }
-                if run.averageHeartRate != nil { heartRateSection }
+                if !run.metrics.isEmpty || run.averageHeartRate != nil { hrSection }
             }
             .padding(.horizontal, PACESpacing.screenEdge)
             .padding(.top, PACESpacing.md)
@@ -38,8 +39,8 @@ struct RunSummaryView: View {
         .navigationTitle(PACEFormatter.runDate(run.startDate))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { overflowMenu }
-        .sheet(isPresented: $showFullMap) { FullMapView(run: run) }
-        .alert("Delete Run", isPresented: $showDeleteAlert) {
+        .fullScreenCover(isPresented: $showFullMap) { FullMapView(run: run) }
+        .alert("Delete Run?", isPresented: $showDeleteAlert) {
             Button("Delete", role: .destructive) {
                 context.delete(run)
                 try? context.save()
@@ -47,67 +48,16 @@ struct RunSummaryView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This run will be permanently deleted.")
+            Text("This cannot be undone.")
         }
     }
 
-    // MARK: - Header
+    // MARK: - Insight (top of screen)
 
-    private var headerSection: some View {
-        VStack(spacing: PACESpacing.sm) {
-            Text(PACEFormatter.distance(run.distanceMeters, unit: unit, decimals: 2))
-                .font(PACEFonts.statLarge)
-                .foregroundStyle(PACEColors.textPrimary)
-            + Text(" \(unit.displayName)")
-                .font(PACEFonts.statMedium)
-                .foregroundStyle(PACEColors.textSecondary)
-
-            HStack(spacing: PACESpacing.xl) {
-                VStack(spacing: 2) {
-                    Text(PACEFormatter.duration(run.activeDuration))
-                        .font(PACEFonts.statMedium)
-                        .foregroundStyle(PACEColors.textPrimary)
-                    Text("TIME")
-                        .font(PACEFonts.metricLabel)
-                        .foregroundStyle(PACEColors.textSecondary)
-                        .tracking(3)
-                }
-                VStack(spacing: 2) {
-                    Text(PACEFormatter.pace(run.averagePaceSecondsPerMeter, unit: unit) + "/\(unit.displayName)")
-                        .font(PACEFonts.statMedium)
-                        .foregroundStyle(PACEColors.textPrimary)
-                    Text("AVG PACE")
-                        .font(PACEFonts.metricLabel)
-                        .foregroundStyle(PACEColors.textSecondary)
-                        .tracking(3)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, PACESpacing.sm)
-    }
-
-    // MARK: - Map Card
-
-    private var mapCard: some View {
-        Button { showFullMap = true } label: {
-            RouteMapView(coordinates: run.route, isInteractive: false)
-                .frame(height: 200)
-                .cornerRadius(PACESpacing.cardCornerRadius)
-                .overlay(
-                    RoundedRectangle(cornerRadius: PACESpacing.cardCornerRadius)
-                        .stroke(PACEColors.separator, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Insight Card
-
-    private func insightCard(_ insight: RunInsight) -> some View {
+    private func insightCard(_ insight: PACEAnalytics.RunInsight) -> some View {
         HStack(spacing: PACESpacing.md) {
-            Image(systemName: insight.isPositive ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                .font(.system(size: 24))
+            Image(systemName: insight.isPositive ? "arrow.up.circle.fill" : "minus.circle.fill")
+                .font(.system(size: 26))
                 .foregroundStyle(insight.isPositive ? PACEColors.accentCyan : PACEColors.accentOrange)
             Text(insight.headline)
                 .font(PACEFonts.body)
@@ -119,53 +69,87 @@ struct RunSummaryView: View {
         .cornerRadius(PACESpacing.cardCornerRadius)
     }
 
+    // MARK: - Header
+
+    private var headerSection: some View {
+        VStack(spacing: PACESpacing.sm) {
+            (Text(PACEFormatter.distance(run.distanceMeters, unit: unit, decimals: 2))
+                .font(PACEFonts.statLarge)
+                .foregroundStyle(PACEColors.textPrimary)
+             + Text(" \(unit.displayName)")
+                .font(PACEFonts.statMedium)
+                .foregroundStyle(PACEColors.textSecondary))
+
+            HStack(spacing: PACESpacing.xl) {
+                statPair(value: PACEFormatter.duration(run.activeDuration), label: "TIME")
+                statPair(
+                    value: PACEFormatter.pace(run.averagePaceSecondsPerMeter, unit: unit) + "/\(unit.displayName)",
+                    label: "AVG PACE"
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func statPair(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(PACEFonts.statMedium)
+                .foregroundStyle(PACEColors.textPrimary)
+            Text(label)
+                .font(PACEFonts.metricLabel)
+                .foregroundStyle(PACEColors.textSecondary)
+                .tracking(3)
+        }
+    }
+
+    // MARK: - Map Card
+
+    private var mapCard: some View {
+        Button { showFullMap = true } label: {
+            RouteMapView(coordinates: run.route)
+                .frame(height: 180)
+                .cornerRadius(PACESpacing.cardCornerRadius)
+                .allowsHitTesting(false)
+        }
+        .buttonStyle(.plain)
+        .overlay(
+            RoundedRectangle(cornerRadius: PACESpacing.cardCornerRadius)
+                .stroke(PACEColors.separator, lineWidth: 1)
+        )
+        .accessibilityLabel("Route map — tap to expand")
+    }
+
     // MARK: - Stats Grid
 
     private var statsGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: PACESpacing.sm) {
-            MetricCard(
-                value: PACEFormatter.pace(run.bestPaceSecondsPerMeter, unit: unit),
-                label: "Best Pace"
-            )
-            MetricCard(
-                value: PACEFormatter.elevation(run.elevationGainMeters),
-                label: "Elevation +"
-            )
+            MetricCard(value: PACEFormatter.pace(run.bestPaceSecondsPerMeter, unit: unit), label: "Best Pace")
+            MetricCard(value: PACEFormatter.elevation(run.elevationGainMeters), label: "Elevation +")
             if let avgHR = run.averageHeartRate {
-                MetricCard(
-                    value: PACEFormatter.heartRate(avgHR),
-                    label: "Avg HR",
-                    accent: PACEColors.hrZone2
-                )
+                MetricCard(value: PACEFormatter.heartRate(avgHR), label: "Avg HR", accent: PACEColors.hrZone2)
             }
-            if let maxHR = run.maxHeartRate {
-                MetricCard(
-                    value: PACEFormatter.heartRate(maxHR),
-                    label: "Max HR",
-                    accent: PACEColors.hrZone4
-                )
+            if let maxHRVal = run.maxHeartRate {
+                MetricCard(value: PACEFormatter.heartRate(maxHRVal), label: "Max HR", accent: PACEColors.hrZone4)
             }
             if let cal = run.activeCalories {
-                MetricCard(value: "\(Int(cal))", label: "Calories")
+                MetricCard(value: "\(Int(cal))", label: "Cal")
             }
-            MetricCard(
-                value: PACEFormatter.duration(run.totalDuration - run.activeDuration),
-                label: "Paused"
-            )
+            let pausedTime = run.totalDuration - run.activeDuration
+            if pausedTime > 30 {
+                MetricCard(value: PACEFormatter.duration(pausedTime), label: "Paused")
+            }
         }
     }
 
-    // MARK: - Splits Section
+    // MARK: - Splits
 
     private var splitsSection: some View {
         VStack(spacing: 0) {
-            Button {
-                withAnimation(.spring()) { showSplits.toggle() }
-            } label: {
+            Button { withAnimation(.spring(dampingFraction: 0.8)) { showSplits.toggle() } } label: {
                 HStack {
                     Text("Splits")
-                        .font(PACEFonts.body)
-                        .foregroundStyle(PACEColors.textPrimary)
+                        .font(PACEFonts.body).foregroundStyle(PACEColors.textPrimary)
                     Spacer()
                     Image(systemName: showSplits ? "chevron.up" : "chevron.down")
                         .font(.system(size: 13, weight: .medium))
@@ -183,96 +167,99 @@ struct RunSummaryView: View {
         }
     }
 
-    // MARK: - Heart Rate Section
+    // MARK: - HR Section
 
-    private var heartRateSection: some View {
+    private var hrSection: some View {
         VStack(alignment: .leading, spacing: PACESpacing.sm) {
-            Text("Heart Rate Zones")
-                .font(PACEFonts.caption)
+            Text("HEART RATE ZONES")
+                .font(PACEFonts.metricLabel)
                 .foregroundStyle(PACEColors.textSecondary)
-                .padding(.leading, PACESpacing.xs)
-            HeartRateZoneBar(metrics: run.metrics)
-                .frame(height: 48)
+                .tracking(3)
+                .padding(.leading, 2)
+
+            HeartRateZoneBar(metrics: run.metrics, maxHR: maxHR)
+                .frame(height: 36)
                 .padding(PACESpacing.md)
                 .background(PACEColors.surface)
                 .cornerRadius(PACESpacing.cardCornerRadius)
         }
     }
 
-    // MARK: - Overflow Menu
+    // MARK: - Overflow
 
     @ToolbarContentBuilder
     private var overflowMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                Button { exportGPX() } label: {
-                    Label("Export GPX", systemImage: "arrow.up.doc")
-                }
-                Button { showShareSheet = true } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
+                Button { exportGPX() } label: { Label("Export GPX", systemImage: "arrow.up.doc") }
+                Divider()
                 Button(role: .destructive) { showDeleteAlert = true } label: {
                     Label("Delete Run", systemImage: "trash")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .foregroundStyle(PACEColors.textPrimary)
+                Image(systemName: "ellipsis.circle").foregroundStyle(PACEColors.textPrimary)
             }
         }
     }
 
     private func exportGPX() {
-        let gpx = HealthKitManager().exportGPX(run: run)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("run_\(run.id).gpx")
-        try? gpx.write(to: url, atomically: true, encoding: .utf8)
-        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first?.rootViewController?
-            .present(av, animated: true)
+        let gpx = HealthKitManager().gpxString(for: run)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pace_run_\(run.id).gpx")
+        do {
+            try gpx.write(to: url, atomically: true, encoding: .utf8)
+            let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first?.windows.first?.rootViewController?.present(av, animated: true)
+        } catch {
+            // Could not write GPX — surface this in a future update
+        }
     }
 }
 
-// MARK: - Route Map View
+// MARK: - Route Map View (correct MapKit polyline approach)
 
-struct RouteMapView: View {
+struct RouteMapView: UIViewRepresentable {
     let coordinates: [CLLocationCoordinate2D]
-    var isInteractive: Bool = true
 
-    @State private var region: MKCoordinateRegion = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 0, longitude: 0),
-        span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-    )
-
-    var body: some View {
-        Map(coordinateRegion: $region, interactionModes: isInteractive ? .all : [])
-            .overlay(routeOverlay)
-            .onAppear { fitRoute() }
+    func makeUIView(context: Context) -> MKMapView {
+        let map = MKMapView()
+        map.delegate = context.coordinator
+        map.isUserInteractionEnabled = false
+        map.overrideUserInterfaceStyle = .dark
+        map.mapType = .standard
+        map.pointOfInterestFilter = .excludingAll
+        map.showsCompass = false
+        map.showsScale = false
+        return map
     }
 
-    private var routeOverlay: some View {
-        GeometryReader { geo in
-            Canvas { context, size in
-                guard coordinates.count > 1 else { return }
-                var path = Path()
-                let points = coordinates.map { coord -> CGPoint in
-                    let x = (coord.longitude - (region.center.longitude - region.span.longitudeDelta / 2)) /
-                            region.span.longitudeDelta * size.width
-                    let y = size.height - (coord.latitude - (region.center.latitude - region.span.latitudeDelta / 2)) /
-                            region.span.latitudeDelta * size.height
-                    return CGPoint(x: x, y: y)
-                }
-                path.move(to: points[0])
-                for point in points.dropFirst() { path.addLine(to: point) }
-                context.stroke(path, with: .color(PACEColors.accentCyan), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
+    func updateUIView(_ mapView: MKMapView, context: Context) {
+        mapView.removeOverlays(mapView.overlays)
+        guard coordinates.count > 1 else { return }
+
+        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
+        mapView.addOverlay(polyline)
+
+        // Fit to route with padding
+        if let region = coordinates.boundingRegion {
+            mapView.setRegion(region, animated: false)
         }
     }
 
-    private func fitRoute() {
-        if let fitRegion = coordinates.boundingRegion {
-            region = fitRegion
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    class Coordinator: NSObject, MKMapViewDelegate {
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let polyline = overlay as? MKPolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = UIColor(Color(hex: "00D4FF"))
+                renderer.lineWidth = 4
+                renderer.lineCap = .round
+                renderer.lineJoin = .round
+                return renderer
+            }
+            return MKOverlayRenderer(overlay: overlay)
         }
     }
 }
@@ -285,17 +272,41 @@ struct FullMapView: View {
 
     var body: some View {
         NavigationStack {
-            RouteMapView(coordinates: run.route, isInteractive: true)
+            InteractiveRouteMapView(coordinates: run.route)
                 .ignoresSafeArea()
                 .navigationTitle("Route")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Done") { dismiss() }
+                        Button("Done") { dismiss() }.foregroundStyle(PACEColors.accentCyan)
                     }
                 }
         }
     }
+}
+
+struct InteractiveRouteMapView: UIViewRepresentable {
+    let coordinates: [CLLocationCoordinate2D]
+
+    func makeUIView(context: Context) -> MKMapView {
+        let map = MKMapView()
+        map.delegate = context.coordinator
+        map.overrideUserInterfaceStyle = .dark
+        map.mapType = .standard
+        map.pointOfInterestFilter = .excludingAll
+        return map
+    }
+
+    func updateUIView(_ mapView: MKMapView, context: Context) {
+        mapView.removeOverlays(mapView.overlays)
+        guard coordinates.count > 1 else { return }
+        mapView.addOverlay(MKPolyline(coordinates: coordinates, count: coordinates.count))
+        if let region = coordinates.boundingRegion {
+            mapView.setRegion(region, animated: false)
+        }
+    }
+
+    func makeCoordinator() -> RouteMapView.Coordinator { RouteMapView.Coordinator() }
 }
 
 // MARK: - Splits Table
@@ -304,34 +315,31 @@ struct SplitsTableView: View {
     let splits: [Split]
     let unit: DistanceUnit
 
-    private var paces: [Double] { splits.map(\.paceSecondsPerMeter).filter { $0 > 0 } }
-    private var avgPace: Double { paces.isEmpty ? 0 : paces.reduce(0, +) / Double(paces.count) }
+    private var avgPace: Double {
+        let paces = splits.map(\.paceSecondsPerMeter).filter { $0 > 0 }
+        return paces.isEmpty ? 0 : paces.reduce(0, +) / Double(paces.count)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(splits.indices, id: \.self) { i in
                 let split = splits[i]
-                HStack(spacing: PACESpacing.md) {
+                HStack(spacing: PACESpacing.sm) {
                     Text("\(split.index + 1)")
-                        .font(PACEFonts.caption)
-                        .foregroundStyle(PACEColors.textSecondary)
+                        .font(PACEFonts.caption).foregroundStyle(PACEColors.textSecondary)
                         .frame(width: 24, alignment: .leading)
-
                     paceBar(for: split)
-
                     Spacer()
-
                     Text(PACEFormatter.pace(split.paceSecondsPerMeter, unit: unit) + "/\(unit.displayName)")
-                        .font(PACEFonts.caption)
-                        .foregroundStyle(PACEColors.textPrimary)
-                        .frame(width: 70, alignment: .trailing)
+                        .font(PACEFonts.caption).foregroundStyle(PACEColors.textPrimary)
+                        .frame(width: 72, alignment: .trailing)
                 }
                 .padding(.horizontal, PACESpacing.md)
                 .padding(.vertical, PACESpacing.sm)
                 .background(PACEColors.surface)
 
                 if i < splits.count - 1 {
-                    PACESeparator().padding(.leading, PACESpacing.xl)
+                    PACESeparator().padding(.leading, 44)
                 }
             }
         }
@@ -341,23 +349,15 @@ struct SplitsTableView: View {
     private func paceBar(for split: Split) -> some View {
         let pace = split.paceSecondsPerMeter
         let isFaster = pace > 0 && avgPace > 0 && pace < avgPace
-        let ratio = avgPace > 0 ? min(pace / avgPace, 2.0) : 1.0
-        let width = isFaster ? CGFloat(2.0 - ratio) * 60 : CGFloat(ratio - 1.0) * 40
+        let deviation = avgPace > 0 ? abs(pace - avgPace) / avgPace : 0
+        let barWidth = CGFloat(min(deviation * 3, 1.0)) * 60 + 4
 
         return HStack(spacing: 0) {
-            if isFaster {
-                Spacer()
-                Rectangle()
-                    .fill(PACEColors.accentCyan)
-                    .frame(width: max(4, width), height: 4)
-                    .cornerRadius(2)
-            } else {
-                Rectangle()
-                    .fill(PACEColors.accentOrange)
-                    .frame(width: max(4, width), height: 4)
-                    .cornerRadius(2)
-                Spacer()
-            }
+            Rectangle()
+                .fill(isFaster ? PACEColors.accentCyan : PACEColors.accentOrange)
+                .frame(width: barWidth, height: 4)
+                .cornerRadius(2)
+            Spacer()
         }
         .frame(width: 80)
     }
@@ -367,17 +367,17 @@ struct SplitsTableView: View {
 
 struct HeartRateZoneBar: View {
     let metrics: [HealthMetricSnapshot]
+    let maxHR: Double
 
     var body: some View {
         GeometryReader { geo in
             HStack(spacing: 2) {
                 ForEach(HeartRateZone.allCases, id: \.rawValue) { zone in
                     let fraction = zoneFraction(zone)
-                    if fraction > 0 {
-                        Rectangle()
+                    if fraction > 0.01 {
+                        RoundedRectangle(cornerRadius: 3)
                             .fill(PACEColors.hrZoneColor(zone))
                             .frame(width: geo.size.width * CGFloat(fraction))
-                            .cornerRadius(4)
                     }
                 }
             }
@@ -385,12 +385,9 @@ struct HeartRateZoneBar: View {
     }
 
     private func zoneFraction(_ zone: HeartRateZone) -> Double {
-        let hrSamples = metrics.compactMap(\.heartRate)
-        guard !hrSamples.isEmpty else { return zone == .zone2 ? 1.0 : 0 }
-        let maxHR = 190.0
-        let inZone = hrSamples.filter { hr in
-            hr >= zone.lowerBound * maxHR && hr < zone.upperBound * maxHR
-        }
-        return Double(inZone.count) / Double(hrSamples.count)
+        let samples = metrics.compactMap(\.heartRate)
+        guard !samples.isEmpty else { return zone == .zone2 ? 1.0 : 0 }
+        let inZone = samples.filter { $0 >= zone.lowerBound * maxHR && $0 < zone.upperBound * maxHR }
+        return Double(inZone.count) / Double(samples.count)
     }
 }

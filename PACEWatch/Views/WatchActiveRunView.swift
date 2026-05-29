@@ -1,45 +1,73 @@
 import SwiftUI
 
-struct WatchActiveRunView: View {
-    @EnvironmentObject private var service: WatchRunService
+// Watch Active Run — handles both .active and .paused phases.
+// Pause: Digital Crown button (toolbar) + side button via .onLongPressGesture.
+// Pause overlay slides in from bottom when phase == .paused.
 
-    @State private var metricPage: Int = 0
-    private let pageCount = 3
+struct WatchActiveRunView: View {
+    @Environment(WatchRunService.self) private var service
+
+    @State private var page: Int = 0  // 0 = primary, 1 = secondary
 
     var body: some View {
-        TabView(selection: $metricPage) {
-            primaryMetricsPage.tag(0)
-            secondaryMetricsPage.tag(1)
-            lapMetricsPage.tag(2)
+        ZStack {
+            metricsView
+
+            if case .paused = service.phase {
+                WatchPauseView()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
-        .tabViewStyle(.page)
-        .background(Color(hex: "0A0A0A"))
-        // Side button triggers pause via Digital Crown long press — handled in WatchPauseView presentation
-        .gesture(
-            // Double tap = mark lap
-            TapGesture(count: 2).onEnded { service.markLap() }
-        )
+        .animation(.easeInOut(duration: 0.2), value: isPaused)
+        // Side button long-press = pause (best approximation on Watch)
+        .onLongPressGesture(minimumDuration: 0.5) {
+            if case .active = service.phase { service.pauseRun() }
+        }
         .toolbar {
+            // Toolbar button as secondary pause affordance
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    service.pauseRun()
-                } label: {
-                    Image(systemName: "pause.fill")
-                        .foregroundStyle(Color(hex: "00D4FF"))
+                if case .active = service.phase {
+                    Button { service.pauseRun() } label: {
+                        Image(systemName: "pause.circle.fill")
+                            .foregroundStyle(Color(hex: "00D4FF"))
+                            .font(.system(size: 20))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
     }
 
-    // MARK: - Page 0: Primary Metrics
+    private var isPaused: Bool {
+        if case .paused = service.phase { return true }
+        return false
+    }
 
-    private var primaryMetricsPage: some View {
-        VStack(spacing: 4) {
-            // Primary: Current Pace
-            VStack(spacing: 0) {
+    // MARK: - Metrics
+
+    private var metricsView: some View {
+        TabView(selection: $page) {
+            primaryPage.tag(0)
+            secondaryPage.tag(1)
+        }
+        .tabViewStyle(.page)
+        .background(Color(hex: "0A0A0A"))
+        // Double tap = mark lap (only in active state)
+        .onTapGesture(count: 2) {
+            if case .active = service.phase { service.markLap() }
+        }
+    }
+
+    // MARK: - Page 0: Primary
+
+    private var primaryPage: some View {
+        VStack(spacing: 0) {
+            // Primary: Current Pace — top half
+            VStack(spacing: 2) {
                 Text(paceDisplay)
                     .font(PACEWatchFonts.metricPrimary)
                     .foregroundStyle(.white)
+                    .monospacedDigit()
                     .minimumScaleFactor(0.5)
                     .lineLimit(1)
                     .contentTransition(.numericText())
@@ -50,30 +78,21 @@ struct WatchActiveRunView: View {
             }
             .frame(maxHeight: .infinity)
 
-            Divider()
-                .background(Color(hex: "2A2A2A"))
+            Divider().background(Color(hex: "2A2A2A"))
 
-            // Secondary row
+            // Secondary row: Distance | Time
             HStack(spacing: 0) {
-                watchSecondaryMetric(
-                    value: PACEFormatter.distance(service.distanceMeters, unit: .kilometers),
-                    label: "KM"
-                )
-                Divider()
-                    .frame(width: 1, height: 30)
-                    .background(Color(hex: "2A2A2A"))
-                watchSecondaryMetric(
-                    value: PACEFormatter.shortDuration(service.elapsedTime),
-                    label: "TIME"
-                )
+                watchMetric(PACEFormatter.distance(service.distanceMeters, unit: .kilometers), label: "KM")
+                Divider().frame(width: 1, height: 28).background(Color(hex: "2A2A2A"))
+                watchMetric(PACEFormatter.shortDuration(service.elapsedTime), label: "TIME")
             }
             .frame(maxHeight: .infinity)
 
             // HR row
             if let hr = service.currentHeartRate {
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     Image(systemName: "heart.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: 10))
                         .foregroundStyle(hrColor(hr))
                     Text(PACEFormatter.heartRate(hr))
                         .font(PACEWatchFonts.metricSecondary)
@@ -86,56 +105,31 @@ struct WatchActiveRunView: View {
                 .frame(maxHeight: .infinity)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
     }
 
-    // MARK: - Page 1: Secondary Metrics
+    // MARK: - Page 1: Secondary (avg pace, elevation, lap)
 
-    private var secondaryMetricsPage: some View {
-        VStack(spacing: 8) {
-            watchLabeledMetric(
-                value: avgPaceDisplay,
-                label: "AVG PACE /KM"
-            )
-            watchLabeledMetric(
-                value: PACEFormatter.elevation(service.elevationGain),
-                label: "ELEVATION +"
-            )
-            watchLabeledMetric(
-                value: "\(service.completedSplits.count)",
-                label: "LAPS"
-            )
-        }
-        .padding(.horizontal, 8)
-    }
-
-    // MARK: - Page 2: Lap Metrics
-
-    private var lapMetricsPage: some View {
-        VStack(spacing: 8) {
-            watchLabeledMetric(
-                value: lapPaceDisplay,
-                label: "LAP PACE /KM"
-            )
-            watchLabeledMetric(
-                value: PACEFormatter.distance(service.lapDistanceMeters, unit: .kilometers),
-                label: "LAP KM"
-            )
-            Text("LAP \(service.currentLapIndex + 1)")
-                .font(PACEWatchFonts.metricLabel)
-                .foregroundStyle(Color(hex: "00D4FF"))
-                .tracking(3)
+    private var secondaryPage: some View {
+        VStack(spacing: 10) {
+            watchLabeledMetric(avgPaceDisplay, label: "AVG PACE /KM")
+            watchLabeledMetric(PACEFormatter.elevation(service.elevationGain), label: "ELEVATION +")
+            HStack(spacing: 12) {
+                watchLabeledMetric(lapPaceDisplay, label: "LAP PACE")
+                watchLabeledMetric("\(service.currentLapIndex + 1)", label: "LAP #")
+            }
         }
         .padding(.horizontal, 8)
     }
 
     // MARK: - Sub-views
 
-    private func watchSecondaryMetric(value: String, label: String) -> some View {
+    private func watchMetric(_ value: String, label: String) -> some View {
         VStack(spacing: 2) {
             Text(value)
                 .font(PACEWatchFonts.metricSecondary)
                 .foregroundStyle(.white)
+                .monospacedDigit()
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
                 .contentTransition(.numericText())
@@ -147,17 +141,18 @@ struct WatchActiveRunView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func watchLabeledMetric(value: String, label: String) -> some View {
+    private func watchLabeledMetric(_ value: String, label: String) -> some View {
         VStack(spacing: 2) {
             Text(value)
                 .font(PACEWatchFonts.metricSecondary)
                 .foregroundStyle(.white)
+                .monospacedDigit()
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
             Text(label)
                 .font(PACEWatchFonts.metricLabel)
                 .foregroundStyle(Color(hex: "606060"))
-                .tracking(3)
+                .tracking(2)
         }
     }
 
@@ -166,16 +161,13 @@ struct WatchActiveRunView: View {
     private var paceDisplay: String {
         PACEFormatter.pace(service.currentPaceSecondsPerMeter, unit: .kilometers)
     }
-
     private var avgPaceDisplay: String {
         guard service.distanceMeters > 10, service.elapsedTime > 0 else { return "--:--" }
         return PACEFormatter.pace(service.elapsedTime / service.distanceMeters, unit: .kilometers)
     }
-
     private var lapPaceDisplay: String {
         guard service.lapDistanceMeters > 10 else { return "--:--" }
-        let lapTime = Date.now.timeIntervalSince(service.lapStartTime)
-        return PACEFormatter.pace(lapTime / service.lapDistanceMeters, unit: .kilometers)
+        return PACEFormatter.pace(Date.now.timeIntervalSince(service.lapStartTime) / service.lapDistanceMeters, unit: .kilometers)
     }
 
     private func hrColor(_ hr: Double) -> Color {

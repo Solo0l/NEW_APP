@@ -15,19 +15,16 @@ final class User {
 }
 
 struct UserPreferences: Codable {
-    var distanceUnit: DistanceUnit = .kilometers
+    var distanceUnit: DistanceUnit = .systemDefault
     var autoPauseEnabled: Bool = false
     var resumeCountdownEnabled: Bool = true
     var lapInterval: LapInterval = .oneKilometer
     var audioSplitCues: Bool = false
     var watchPrimaryMetric: WatchPrimaryMetric = .currentPace
     var showHeartRateZone: Bool = true
-    var outdoorModeEnabled: Bool = false
-    var screenDimDelay: TimeInterval = 60
-    var hasCompletedOnboarding: Bool = false
-    var hasCompletedQuickSetup: Bool = false
-    var appLaunchCount: Int = 0
     var estimatedMaxHeartRate: Double = 190
+    var hasCompletedOnboarding: Bool = false
+    var appLaunchCount: Int = 0
 
     static var `default`: UserPreferences { UserPreferences() }
 }
