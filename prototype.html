@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PACE — Interactive Prototype</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #0E0E0F; overflow: hidden; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: #444; }
+    select option { background: #1E1E1E; color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="root" style="height:100%;"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ═══════════════════════════════════════════════════════
+    // DESIGN TOKENS — mirrors PACEColors.swift exactly
+    // ═══════════════════════════════════════════════════════
+    const C = {
+      bg:      '#0A0A0A', surface:  '#141414', elevated: '#1E1E1E',
+      cyan:    '#00D4FF', orange:   '#FF6B35', cyanDim: 'rgba(0,212,255,0.12)',
+      white:   '#FFFFFF', sec:      '#606060', tert:    '#3A3A3A',
+      sep:     '#2A2A2A', success:  '#30D158', error:   '#FF3B30',
+      warning: '#FFD60A',
+      hz1: '#60D0A0', hz2: '#A8D060', hz3: '#FFD060', hz4: '#FF9030', hz5: '#FF3060',
+    };
+
+    // SF Pro equivalents via system fonts
+    const ff  = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif';
+    const fft = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
+
+    // ═══════════════════════════════════════════════════════
+    // UTILITY FORMATTERS — mirrors Formatters.swift
+    // ═══════════════════════════════════════════════════════
+    const fmt = {
+      pace: s => {
+        if (!s || s <= 0 || s > 1800) return '--:--';
+        const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+        return `${m}:${String(sec).padStart(2,'0')}`;
+      },
+      time: s => {
+        const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+        if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+        return `${m}:${String(sec).padStart(2,'0')}`;
+      },
+      dist: (m, d=2) => (m/1000).toFixed(d),
+      hr: v => v ? `${Math.round(v)}` : '--',
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // MOCK DATA
+    // ═══════════════════════════════════════════════════════
+    const RUNS = [
+      { id:1, date:'Wed 28', dist:8420,  dur:2538, pace:301, hr:152, elev:38  },
+      { id:2, date:'Sun 25', dist:5120,  dur:1665, pace:325, hr:144, elev:22  },
+      { id:3, date:'Thu 22', dist:10030, dur:3134, pace:312, hr:157, elev:54  },
+      { id:4, date:'Tue 20', dist:6800,  dur:2244, pace:330, hr:148, elev:29  },
+      { id:5, date:'Sat 17', dist:5500,  dur:1760, pace:320, hr:146, elev:18  },
+      { id:6, date:'Wed 14', dist:8100,  dur:2511, pace:310, hr:151, elev:42  },
+    ];
+    const WEEKLY = [12.1,18.4,22.3,15.2,28.1,24.4,19.8,26.5,31.2,18.5,22.8,18.5];
+    const SPLITS = [
+      {i:1,p:318},{i:2,p:304},{i:3,p:298},{i:4,p:301},
+      {i:5,p:286},{i:6,p:310},{i:7,p:295},{i:8,p:279},
+    ];
+
+    // ═══════════════════════════════════════════════════════
+    // SHARED COMPONENTS
+    // ═══════════════════════════════════════════════════════
+
+    const Ring = ({ progress=0, size=60, stroke=6, color=C.cyan, bg=C.elevated }) => {
+      const r = (size - stroke) / 2;
+      const circ = 2 * Math.PI * r;
+      return (
+        <svg width={size} height={size} style={{transform:'rotate(-90deg)',flexShrink:0}}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={bg} strokeWidth={stroke}/>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+            strokeDasharray={`${Math.max(0,progress)*circ} ${circ}`} strokeLinecap="round"/>
+        </svg>
+      );
+    };
+
+    const NavBar = ({ title, left, right, large=false }) => (
+      <div style={{
+        position:'sticky', top:0, zIndex:50,
+        background: C.bg + 'F4', backdropFilter:'blur(12px)',
+        borderBottom:`1px solid ${C.sep}`,
+        padding: large ? '12px 20px 10px' : '0 16px',
+        display:'flex', alignItems: large ? 'flex-start' : 'center',
+        minHeight: large ? 96 : 52,
+        flexDirection: large ? 'column' : 'row',
+        paddingTop: large ? 58 : 0,
+        gap: large ? 2 : 0,
+      }}>
+        {large ? (
+          <>
+            <div style={{display:'flex',width:'100%',justifyContent:'space-between',alignItems:'center',position:'absolute',top:0,left:0,right:0,height:52,padding:'0 16px'}}>
+              {left && <div>{left}</div>}
+              {right && <div style={{marginLeft:'auto'}}>{right}</div>}
+            </div>
+            <div style={{fontFamily:ff,fontSize:32,fontWeight:'700',color:C.white,letterSpacing:'-0.02em',lineHeight:1,marginTop:4}}>
+              {title}
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{width:70}}>{left}</div>
+            <div style={{flex:1,textAlign:'center',fontFamily:fft,fontSize:17,fontWeight:'600',color:C.white}}>{title}</div>
+            <div style={{width:70,display:'flex',justifyContent:'flex-end'}}>{right}</div>
+          </>
+        )}
+      </div>
+    );
+
+    const TabBar = ({ active, go }) => (
+      <div style={{
+        borderTop:`1px solid ${C.sep}`,
+        background: C.surface + 'F6', backdropFilter:'blur(12px)',
+        display:'flex', flexShrink:0,
+      }}>
+        {[
+          {id:'home',    icon:'⌂', label:'Home'},
+          {id:'history', icon:'◷', label:'History'},
+          {id:'settings',icon:'⚙', label:'Settings'},
+        ].map(t => (
+          <button key={t.id} onClick={()=>go(t.id)} style={{
+            flex:1, padding:'10px 0 16px', background:'none', border:'none',
+            cursor:'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:3,
+            color: active===t.id ? C.cyan : C.sec,
+          }}>
+            <span style={{fontSize:20}}>{t.icon}</span>
+            <span style={{fontFamily:fft,fontSize:10,fontWeight:'500'}}>{t.label}</span>
+          </button>
+        ))}
+      </div>
+    );
+
+    const Btn = ({label, onClick, style}) => (
+      <button onClick={onClick} style={{
+        background:C.cyan, color:'#0A0A0A', fontFamily:fft, fontSize:16, fontWeight:'600',
+        padding:'14px 24px', borderRadius:14, border:'none', width:'100%', cursor:'pointer',
+        letterSpacing:'0.02em', ...style,
+      }}>{label}</button>
+    );
+
+    const MetCard = ({value, label, accent=C.white}) => (
+      <div style={{background:C.surface, borderRadius:12, padding:'12px 14px'}}>
+        <div style={{fontFamily:ff, fontSize:22, fontWeight:'300', color:accent, letterSpacing:'-0.02em', fontVariantNumeric:'tabular-nums'}}>{value}</div>
+        <div style={{fontFamily:fft, fontSize:10, color:C.sec, letterSpacing:'0.14em', fontWeight:'500', marginTop:3}}>{label}</div>
+      </div>
+    );
+
+    const Sec = ({title}) => (
+      <div style={{fontFamily:fft,fontSize:11,fontWeight:'600',color:C.sec,letterSpacing:'0.18em',marginBottom:6,paddingLeft:2}}>{title}</div>
+    );
+
+    const Divider = ({vertical, h=36, style}) => (
+      <div style={vertical
+        ? {width:1, height:h, background:C.sep, flexShrink:0, ...style}
+        : {height:1, background:C.sep, ...style}
+      }/>
+    );
+
+    // ═══════════════════════════════════════════════════════
+    // DEVICE FRAMES
+    // ═══════════════════════════════════════════════════════
+
+    const IPhone = ({ children, noScroll=false }) => (
+      <div style={{
+        width:390, height:844,
+        background:C.bg, borderRadius:54,
+        border:'10px solid #1C1C1E',
+        outline:'1px solid #2E2E30',
+        overflow:'hidden', position:'relative',
+        boxShadow:'0 0 0 1px #383838, 0 50px 100px rgba(0,0,0,0.95), inset 0 0 0 1px #2A2A2A',
+        flexShrink:0,
+      }}>
+        {/* Dynamic Island */}
+        <div style={{
+          position:'absolute', top:14, left:'50%', transform:'translateX(-50%)',
+          width:118, height:32, background:'#000', borderRadius:18, zIndex:200,
+        }}/>
+        <div style={{
+          width:'100%', height:'100%',
+          overflowY: noScroll ? 'hidden' : 'auto',
+          overflowX:'hidden',
+          display:'flex', flexDirection:'column',
+        }}>
+          {children}
+        </div>
+      </div>
+    );
+
+    const Watch = ({ children }) => (
+      <div style={{position:'relative', width:210, height:258, flexShrink:0}}>
+        <div style={{position:'absolute',right:-5,top:72,width:5,height:34,background:'#3A3A3C',borderRadius:'0 3px 3px 0'}}/>
+        <div style={{position:'absolute',right:-5,top:126,width:5,height:22,background:'#3A3A3C',borderRadius:'0 3px 3px 0'}}/>
+        <div style={{
+          width:210, height:258, background:'#1C1C1E',
+          borderRadius:56, border:'2px solid #333',
+          overflow:'hidden',
+          boxShadow:'0 24px 64px rgba(0,0,0,0.95), inset 0 0 0 1px rgba(255,255,255,0.04)',
+        }}>
+          <div style={{width:'100%',height:'100%',background:C.bg,borderRadius:54,overflow:'hidden'}}>
+            {children}
+          </div>
+        </div>
+      </div>
+    );
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: WELCOME
+    // ═══════════════════════════════════════════════════════
+    const WelcomeScreen = ({go}) => (
+      <IPhone noScroll>
+        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'80px 36px 50px',gap:0}}>
+          <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:0}}>
+            <div style={{fontFamily:ff,fontSize:68,fontWeight:'100',color:C.white,letterSpacing:'0.18em',lineHeight:1}}>PACE</div>
+            <div style={{width:36,height:1.5,background:C.cyan,margin:'18px 0 22px'}}/>
+            <div style={{fontFamily:fft,fontSize:16,color:C.sec,textAlign:'center',lineHeight:1.65,maxWidth:240}}>
+              Every run. Immediately on your wrist.<br/>Nothing else.
+            </div>
+          </div>
+          <Btn label="Get Started  →" onClick={()=>go('permissions')}/>
+          <div style={{fontFamily:fft,fontSize:12,color:C.tert,marginTop:14,textAlign:'center'}}>No account required</div>
+        </div>
+      </IPhone>
+    );
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: PERMISSIONS
+    // ═══════════════════════════════════════════════════════
+    const PermissionsScreen = ({go}) => (
+      <IPhone>
+        <NavBar title="" left={<span onClick={()=>go('welcome')} style={{color:C.cyan,fontFamily:fft,fontSize:16,cursor:'pointer'}}>‹</span>}/>
+        <div style={{padding:'24px 24px 32px',flex:1,display:'flex',flexDirection:'column'}}>
+          <div style={{fontFamily:ff,fontSize:28,fontWeight:'700',color:C.white,letterSpacing:'-0.02em',marginBottom:8}}>One-time Setup</div>
+          <div style={{fontFamily:fft,fontSize:15,color:C.sec,marginBottom:36,lineHeight:1.6}}>
+            PACE needs two system permissions. All data stays on your device — no servers, no accounts.
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:1,borderRadius:16,overflow:'hidden',marginBottom:36}}>
+            {[
+              {icon:'📍', name:'Location', desc:'GPS route tracking + live distance', badge:'REQUIRED'},
+              {icon:'❤️', name:'Health',   desc:'Heart rate + workout write-back',    badge:'REQUIRED'},
+            ].map(p => (
+              <div key={p.name} style={{background:C.surface,padding:'16px 20px',display:'flex',alignItems:'center',gap:16}}>
+                <div style={{fontSize:26,width:40,textAlign:'center'}}>{p.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:fft,fontSize:15,color:C.white,fontWeight:'600'}}>{p.name}</div>
+                  <div style={{fontFamily:fft,fontSize:13,color:C.sec}}>{p.desc}</div>
+                </div>
+                <div style={{fontFamily:fft,fontSize:10,color:C.cyan,fontWeight:'700',letterSpacing:'0.08em'}}>{p.badge}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{flex:1}}/>
+          <Btn label="Allow & Start Running" onClick={()=>go('home')}/>
+          <div style={{fontFamily:fft,fontSize:12,color:C.tert,textAlign:'center',marginTop:14}}>
+            iOS permission dialogs will follow
+          </div>
+        </div>
+      </IPhone>
+    );
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: HOME
+    // ═══════════════════════════════════════════════════════
+    const HomeScreen = ({go}) => {
+      const [pulse, setPulse] = useState(false);
+      useEffect(() => {
+        const t = setTimeout(()=>setPulse(true), 300);
+        const t2 = setTimeout(()=>setPulse(false), 1100);
+        return ()=>{clearTimeout(t);clearTimeout(t2);};
+      }, []);
+      return (
+        <IPhone>
+          <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+            <div style={{
+              paddingTop:56, paddingBottom:14, paddingLeft:20, paddingRight:20,
+              background:C.bg+'F4', backdropFilter:'blur(12px)',
+              borderBottom:`1px solid ${C.sep}`,
+              position:'sticky', top:0, zIndex:50,
+              display:'flex', justifyContent:'center', alignItems:'center',
+            }}>
+              <div style={{fontFamily:ff,fontSize:18,fontWeight:'600',color:C.white,letterSpacing:'0.1em'}}>PACE</div>
+            </div>
+            <div style={{flex:1,overflowY:'auto',padding:'16px 18px 0'}}>
+              {/* START card */}
+              <div onClick={()=>go('countdown')} style={{
+                background:C.surface, borderRadius:20, padding:'32px 24px',
+                border:`1px solid ${C.sep}`, cursor:'pointer',
+                display:'flex', flexDirection:'column', alignItems:'center', gap:12,
+                marginBottom:14,
+              }}>
+                <div style={{position:'relative',width:88,height:88,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <div style={{
+                    position:'absolute',inset:0,borderRadius:'50%',
+                    background:`rgba(0,212,255,${pulse?0.04:0.14})`,
+                    transform: pulse?'scale(1.25)':'scale(1)',
+                    transition:'all 0.8s ease-out',
+                  }}/>
+                  <span style={{fontSize:44,lineHeight:1,position:'relative'}}>🏃</span>
+                </div>
+                <div style={{fontFamily:fft,fontSize:18,fontWeight:'700',color:C.white,letterSpacing:'0.12em'}}>START RUN</div>
+                <div style={{fontFamily:fft,fontSize:13,color:C.sec}}>Wed 28  ·  8.42 km  ·  5:01/km</div>
+              </div>
+              {/* Goal card */}
+              <div onClick={()=>go('goals')} style={{background:C.surface,borderRadius:16,padding:'14px 16px',marginBottom:14,display:'flex',alignItems:'center',gap:14,cursor:'pointer'}}>
+                <div style={{position:'relative',width:52,height:52}}>
+                  <Ring progress={0.46} size={52} stroke={5}/>
+                  <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:ff,fontSize:12,fontWeight:'600',color:C.white}}>46%</div>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:fft,fontSize:15,color:C.white,fontWeight:'600'}}>40 km this week</div>
+                  <div style={{fontFamily:fft,fontSize:13,color:C.sec}}>18.5 / 40 km</div>
+                </div>
+                <span style={{color:C.tert,fontSize:14}}>›</span>
+              </div>
+              {/* Recent */}
+              <Sec title="RECENT"/>
+              <div style={{background:C.surface,borderRadius:14,overflow:'hidden',marginBottom:24}}>
+                {RUNS.slice(0,3).map((r,i)=>(
+                  <div key={r.id}>
+                    <div onClick={()=>go('summary')} style={{padding:'12px 16px',display:'flex',alignItems:'center',cursor:'pointer'}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontFamily:fft,fontSize:12,color:C.sec}}>{r.date}</div>
+                        <div style={{fontFamily:ff,fontSize:17,fontWeight:'400',color:C.white,letterSpacing:'-0.01em'}}>{fmt.dist(r.dist)} km</div>
+                      </div>
+                      <div style={{textAlign:'right',marginRight:10}}>
+                        <div style={{fontFamily:fft,fontSize:12,color:C.sec}}>{fmt.time(r.dur)}</div>
+                        <div style={{fontFamily:fft,fontSize:12,color:C.sec}}>{fmt.pace(r.pace)}/km</div>
+                      </div>
+                      <span style={{color:C.tert,fontSize:14}}>›</span>
+                    </div>
+                    {i<2&&<Divider style={{marginLeft:16}}/>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <TabBar active="home" go={go}/>
+          </div>
+        </IPhone>
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: PRE-RUN CONFIG
+    // ═══════════════════════════════════════════════════════
+    const PreRunScreen = ({go}) => {
+      const [lap, setLap] = useState('1 km');
+      const [dist, setDist] = useState(10);
+      const [hasGoal, setHasGoal] = useState(true);
+      return (
+        <IPhone>
+          <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+            <NavBar title="Run Config"
+              left={<span onClick={()=>go('home')} style={{color:C.sec,fontFamily:fft,fontSize:16,cursor:'pointer'}}>Cancel</span>}/>
+            <div style={{flex:1,overflowY:'auto',padding:'24px 20px 32px'}}>
+              <Sec title="LAP ALERTS"/>
+              <div style={{display:'flex',gap:8,marginBottom:28}}>
+                {['Off','1 km','5 km'].map(l=>(
+                  <button key={l} onClick={()=>setLap(l)} style={{
+                    flex:1, padding:'11px 0', borderRadius:12, border:'none',
+                    background: lap===l ? C.cyan : C.surface,
+                    color: lap===l ? '#0A0A0A' : C.sec,
+                    fontFamily:fft, fontSize:13, fontWeight:'600', cursor:'pointer',
+                  }}>{l}</button>
+                ))}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:20}}>
+                <Sec title="DISTANCE GOAL"/>
+                <div style={{flex:1}}/>
+                <div onClick={()=>setHasGoal(h=>!h)} style={{
+                  width:44, height:26, borderRadius:13, cursor:'pointer',
+                  background: hasGoal ? C.cyan : C.elevated,
+                  display:'flex', alignItems:'center', padding:'0 2px',
+                  transition:'background 0.2s', flexShrink:0,
+                }}>
+                  <div style={{width:22,height:22,borderRadius:11,background:C.white,transform:hasGoal?'translateX(18px)':'translateX(0)',transition:'transform 0.2s',boxShadow:'0 1px 4px rgba(0,0,0,0.4)'}}/>
+                </div>
+              </div>
+              {hasGoal && (
+                <div style={{background:C.surface,borderRadius:14,padding:'16px 20px',marginBottom:28,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div style={{fontFamily:ff,fontSize:40,fontWeight:'200',color:C.cyan,letterSpacing:'-0.02em'}}>
+                    {dist}<span style={{fontSize:20,color:C.sec,marginLeft:4}}>km</span>
+                  </div>
+                  <div style={{display:'flex',gap:10}}>
+                    <button onClick={()=>setDist(d=>Math.max(1,d-1))} style={{width:38,height:38,borderRadius:19,background:C.elevated,border:'none',color:C.white,fontSize:22,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
+                    <button onClick={()=>setDist(d=>d+1)} style={{width:38,height:38,borderRadius:19,background:C.elevated,border:'none',color:C.white,fontSize:22,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
+                  </div>
+                </div>
+              )}
+              <Divider style={{marginBottom:28}}/>
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>go('countdown')} style={{flex:1,padding:'14px',borderRadius:14,border:'none',background:C.elevated,color:C.sec,fontFamily:fft,fontSize:15,fontWeight:'600',cursor:'pointer'}}>No Goal</button>
+                <button onClick={()=>go('countdown')} style={{flex:2,padding:'14px',borderRadius:14,border:'none',background:C.cyan,color:'#0A0A0A',fontFamily:fft,fontSize:15,fontWeight:'700',cursor:'pointer'}}>Start  →</button>
+              </div>
+            </div>
+          </div>
+        </IPhone>
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: COUNTDOWN
+    // ═══════════════════════════════════════════════════════
+    const CountdownScreen = ({go}) => {
+      const [n, setN] = useState(3);
+      const [gone, setGone] = useState(false);
+      useEffect(()=>{
+        const t = setInterval(()=>{
+          setN(c=>{
+            if (c <= 1) {
+              clearInterval(t);
+              setGone(true);
+              setTimeout(()=>go('active'), 700);
+              return 0;
+            }
+            return c - 1;
+          });
+        }, 1000);
+        return ()=>clearInterval(t);
+      }, [go]);
+      return (
+        <IPhone noScroll>
+          <div style={{width:'100%',height:'100%',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <div style={{
+              fontFamily:ff, color:C.white, letterSpacing:'-0.04em',
+              fontSize: gone ? 72 : 156, fontWeight: gone ? '400' : '100',
+              transition:'font-size 0.25s ease-out, font-weight 0.25s',
+              textAlign:'center',
+            }}>
+              {gone ? 'GO' : n}
+            </div>
+          </div>
+        </IPhone>
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: ACTIVE RUN
+    // ═══════════════════════════════════════════════════════
+    const ActiveScreen = ({go, showPauseInit=false}) => {
+      const [page, setPage] = useState(0);
+      const [elapsed, setElapsed] = useState(847);
+      const [dist,    setDist]    = useState(2340);
+      const [pace,    setPace]    = useState(307);
+      const [hr,      setHr]      = useState(156);
+      const [elev,    setElev]    = useState(28);
+      const [lapD,    setLapD]    = useState(340);
+      const [paused,  setPaused]  = useState(showPauseInit);
+      const [confirmEnd, setConfirmEnd] = useState(false);
+
+      useEffect(()=>{
+        const t = setInterval(()=>{
+          if (paused) return;
+          setElapsed(e=>e+1);
+          setDist(d=>d+3);
+          setPace(p=>Math.max(260,Math.min(370,p+(Math.random()>0.5?1:-1)*4)));
+          setHr(h=>Math.max(140,Math.min(178,h+(Math.random()>0.55?1:-1))));
+          setElev(e=>Math.random()>0.85?e+1:e);
+          setLapD(l=>{ const n=l+3; return n>=1000?n-1000:n; });
+        }, 1000);
+        return ()=>clearInterval(t);
+      }, [paused]);
+
+      const avg = Math.round(elapsed / (dist / 1000));
+      const r = 15, circ = 2 * Math.PI * r;
+
+      return (
+        <IPhone noScroll>
+          <div style={{width:'100%',height:'100%',background:C.bg,display:'flex',flexDirection:'column',position:'relative'}}>
+
+            {/* Zone A — primary metric */}
+            <div style={{flex:4.5,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',paddingTop:46}}>
+              {page===0 ? (
+                <>
+                  <div style={{fontFamily:ff,fontSize:100,fontWeight:'100',color:C.white,letterSpacing:'-0.03em',lineHeight:0.85,fontVariantNumeric:'tabular-nums'}}>
+                    {fmt.pace(pace)}
+                  </div>
+                  <div style={{fontFamily:fft,fontSize:12,color:C.sec,letterSpacing:'0.2em',fontWeight:'600',marginTop:10}}>/KM</div>
+                </>
+              ) : (
+                <>
+                  <div style={{fontFamily:fft,fontSize:11,color:C.sec,letterSpacing:'0.2em',fontWeight:'600',marginBottom:8}}>AVG PACE</div>
+                  <div style={{fontFamily:ff,fontSize:68,fontWeight:'100',color:C.white,letterSpacing:'-0.02em',lineHeight:1,fontVariantNumeric:'tabular-nums'}}>
+                    {fmt.pace(avg)}
+                  </div>
+                  <div style={{fontFamily:fft,fontSize:12,color:C.sec,letterSpacing:'0.2em',fontWeight:'600',marginTop:8}}>/KM</div>
+                </>
+              )}
+            </div>
+
+            {/* Separator */}
+            <Divider style={{margin:'0 36px'}}/>
+
+            {/* Zone B — secondary metrics */}
+            <div style={{flex:2.8,display:'flex',position:'relative'}}>
+              {page===0 ? (
+                <div style={{display:'flex',width:'100%'}}>
+                  {[
+                    {v:fmt.dist(dist), l:'KM'},
+                    {v:fmt.time(elapsed), l:'TIME'},
+                    {v:fmt.hr(hr), l:'BPM'},
+                  ].map((m,i)=>(
+                    <React.Fragment key={i}>
+                      {i>0&&<Divider vertical h={40} style={{margin:'auto 0'}}/>}
+                      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:5}}>
+                        <div style={{fontFamily:ff,fontSize:30,fontWeight:'300',color:i===2?'#FF9030':C.white,letterSpacing:'-0.02em',fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+                        <div style={{fontFamily:fft,fontSize:10,color:C.sec,letterSpacing:'0.22em',fontWeight:'600'}}>{m.l}</div>
+                      </div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              ) : (
+                <div style={{display:'flex',width:'100%'}}>
+                  {[
+                    {v:`+${elev}m`,l:'ELEV +'},
+                    {v:fmt.pace(pace),l:'LAP PACE'},
+                    {v:'1',l:'LAP #'},
+                  ].map((m,i)=>(
+                    <React.Fragment key={i}>
+                      {i>0&&<Divider vertical h={40} style={{margin:'auto 0'}}/>}
+                      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:5}}>
+                        <div style={{fontFamily:ff,fontSize:30,fontWeight:'300',color:C.white,letterSpacing:'-0.02em',fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+                        <div style={{fontFamily:fft,fontSize:10,color:C.sec,letterSpacing:'0.22em',fontWeight:'600'}}>{m.l}</div>
+                      </div>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
+              {/* Page dots */}
+              <div style={{position:'absolute',bottom:8,left:'50%',transform:'translateX(-50%)',display:'flex',gap:5,alignItems:'center'}}>
+                {[0,1].map(i=>(
+                  <div key={i} onClick={()=>setPage(i)} style={{
+                    width:page===i?7:4,height:page===i?7:4,
+                    borderRadius:'50%', background:page===i?C.cyan:C.tert,
+                    cursor:'pointer', transition:'all 0.15s',
+                  }}/>
+                ))}
+              </div>
+            </div>
+
+            {/* Separator */}
+            <Divider style={{margin:'0 36px'}}/>
+
+            {/* Zone C — controls */}
+            <div style={{flex:2.5,display:'flex',alignItems:'center',justifyContent:'space-around',paddingBottom:24,paddingLeft:24,paddingRight:24}}>
+              <button style={{width:54,height:54,borderRadius:27,background:C.elevated,border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22}}>⚑</button>
+              <button onClick={()=>{setPaused(true);setConfirmEnd(false);}} style={{
+                width:74,height:74,borderRadius:37,background:C.elevated,border:'none',
+                cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:30,
+                boxShadow:'0 0 0 3px rgba(255,255,255,0.06)',
+              }}>⏸</button>
+              {/* Lap arc */}
+              <div style={{width:54,height:54,position:'relative',cursor:'default'}}>
+                <svg width={54} height={54} style={{transform:'rotate(-90deg)'}}>
+                  <circle cx={27} cy={27} r={r} fill="none" stroke={C.elevated} strokeWidth={3}/>
+                  <circle cx={27} cy={27} r={r} fill="none" stroke={C.sec} strokeWidth={3}
+                    strokeDasharray={`${(lapD/1000)*circ} ${circ}`} strokeLinecap="round"/>
+                </svg>
+                <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:fft,fontSize:9,color:C.sec,fontVariantNumeric:'tabular-nums'}}>
+                  {(lapD/1000).toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            {/* Pause overlay */}
+            {paused && (
+              <div style={{
+                position:'absolute',bottom:0,left:0,right:0,
+                background:'rgba(10,10,10,0.97)',
+                borderRadius:'22px 22px 0 0',
+                padding:'18px 16px 32px',
+                borderTop:`1px solid ${C.sep}`,
+                display:'flex',flexDirection:'column',gap:8,
+              }}>
+                <button onClick={()=>setPaused(false)} style={{
+                  width:'100%',height:46,borderRadius:14,border:'none',
+                  background:C.cyan,color:'#0A0A0A',fontFamily:fft,fontSize:16,fontWeight:'700',cursor:'pointer',letterSpacing:'0.06em',
+                }}>RESUME</button>
+                <button style={{
+                  width:'100%',height:40,borderRadius:12,border:'none',
+                  background:C.elevated,color:C.white,fontFamily:fft,fontSize:14,fontWeight:'500',cursor:'pointer',
+                  display:'flex',alignItems:'center',justifyContent:'center',gap:6,
+                }}><span style={{fontSize:14}}>⚑</span>Mark Lap</button>
+                {!confirmEnd ? (
+                  <button onClick={()=>setConfirmEnd(true)} style={{
+                    width:'100%',height:34,borderRadius:10,border:'none',
+                    background:'none',color:C.error,fontFamily:fft,fontSize:14,fontWeight:'500',cursor:'pointer',
+                  }}>End Run</button>
+                ) : (
+                  <div style={{display:'flex',gap:8}}>
+                    <button onClick={()=>setConfirmEnd(false)} style={{flex:1,height:34,borderRadius:10,border:'none',background:C.elevated,color:C.sec,fontFamily:fft,fontSize:14,cursor:'pointer'}}>No</button>
+                    <button onClick={()=>go('summary')} style={{flex:1,height:34,borderRadius:10,border:'none',background:C.error,color:C.white,fontFamily:fft,fontSize:14,fontWeight:'700',cursor:'pointer'}}>Finish</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </IPhone>
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: RUN SUMMARY
+    // ═══════════════════════════════════════════════════════
+    const SummaryScreen = ({go}) => {
+      const [splits, setSplits] = useState(false);
+      const avg = SPLITS.reduce((s,x)=>s+x.p,0)/SPLITS.length;
+      return (
+        <IPhone>
+          <NavBar title="May 28"
+            left={<span onClick={()=>go('history')} style={{color:C.cyan,fontFamily:fft,fontSize:16,cursor:'pointer'}}>‹ History</span>}
+            right={<span style={{color:C.sec,fontSize:20,cursor:'pointer'}}>⋯</span>}/>
+          <div style={{padding:'16px 18px 80px'}}>
+            {/* Insight */}
+            <div style={{background:C.cyanDim,borderRadius:14,padding:'14px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:12,border:'1px solid rgba(0,212,255,0.15)'}}>
+              <span style={{fontSize:24,color:C.cyan}}>↑</span>
+              <div style={{fontFamily:fft,fontSize:14,color:C.white,fontWeight:'500',lineHeight:1.4}}>
+                Personal best for 8+ km runs. Fastest average pace ever.
+              </div>
+            </div>
+            {/* Header */}
+            <div style={{textAlign:'center',marginBottom:20}}>
+              <div style={{fontFamily:ff,fontSize:56,fontWeight:'200',color:C.white,letterSpacing:'-0.02em',lineHeight:1}}>
+                8.42<span style={{fontSize:24,color:C.sec,marginLeft:4}}>km</span>
+              </div>
+              <div style={{display:'flex',justifyContent:'center',gap:36,marginTop:12}}>
+                {[{v:'42:18',l:'TIME'},{v:'5:01/km',l:'AVG PACE'}].map(s=>(
+                  <div key={s.l}>
+                    <div style={{fontFamily:ff,fontSize:20,fontWeight:'400',color:C.white,letterSpacing:'-0.01em'}}>{s.v}</div>
+                    <div style={{fontFamily:fft,fontSize:10,color:C.sec,letterSpacing:'0.18em',marginTop:3}}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Route map */}
+            <div style={{background:'#0C1118',borderRadius:16,height:182,marginBottom:16,border:`1px solid ${C.sep}`,overflow:'hidden',position:'relative',cursor:'pointer'}}>
+              <svg width="100%" height="100%" viewBox="0 0 390 182" preserveAspectRatio="xMidYMid slice">
+                <rect width="390" height="182" fill="#0C1118"/>
+                {/* subtle grid */}
+                {[30,60,90,120,150].map(y=><line key={y} x1="0" y1={y} x2="390" y2={y} stroke="#151C25" strokeWidth="1"/>)}
+                {[65,130,195,260,325].map(x=><line key={x} x1={x} y1="0" x2={x} y2="182" stroke="#151C25" strokeWidth="1"/>)}
+                {/* route path */}
+                <path d="M 28,148 C 55,138 85,118 114,98 C 140,80 168,86 196,80 C 222,74 248,64 274,74 C 300,86 326,116 348,136 C 360,148 356,162 338,160 C 308,156 272,142 238,150 C 206,158 176,170 148,164 C 108,156 66,158 28,148Z"
+                  stroke={C.cyan} strokeWidth="3.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                <circle cx="28" cy="148" r="5.5" fill={C.success}/>
+                <circle cx="28" cy="148" r="3" fill={C.white}/>
+              </svg>
+              <div style={{position:'absolute',top:10,right:10,background:'rgba(0,0,0,0.6)',borderRadius:7,padding:'4px 8px',fontFamily:fft,fontSize:10,color:C.sec}}>Tap to expand</div>
+            </div>
+            {/* Stats grid */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+              <MetCard value="4:42/km" label="BEST PACE" accent={C.cyan}/>
+              <MetCard value="+38 m" label="ELEVATION"/>
+              <MetCard value="152" label="AVG HR BPM" accent={C.hz2}/>
+              <MetCard value="171" label="MAX HR BPM" accent={C.hz4}/>
+              <MetCard value="487" label="CALORIES"/>
+              <MetCard value="0:44" label="PAUSED"/>
+            </div>
+            {/* Splits accordion */}
+            <div style={{borderRadius:14,overflow:'hidden',marginBottom:16}}>
+              <div onClick={()=>setSplits(s=>!s)} style={{background:C.surface,padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}}>
+                <div style={{fontFamily:fft,fontSize:15,color:C.white,fontWeight:'600'}}>Splits</div>
+                <span style={{color:C.sec,fontSize:13}}>{splits?'▲':'▼'}</span>
+              </div>
+              {splits && SPLITS.map((s,i)=>{
+                const fast = s.p < avg;
+                const dev = Math.abs(s.p-avg)/avg;
+                const bw = Math.min(dev*3,1)*56+4;
+                return (
+                  <div key={s.i} style={{background:C.surface,borderTop:`1px solid ${C.sep}`}}>
+                    <div style={{padding:'10px 16px',display:'flex',alignItems:'center',gap:12}}>
+                      <div style={{fontFamily:fft,fontSize:13,color:C.sec,width:18}}>{s.i}</div>
+                      <div style={{width:70,height:3,borderRadius:2,background:fast?C.cyan:C.orange}}/>
+                      <div style={{flex:1}}/>
+                      <div style={{fontFamily:fft,fontSize:13,color:C.white,fontVariantNumeric:'tabular-nums'}}>{fmt.pace(s.p)}/km</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* HR Zones */}
+            <Sec title="HEART RATE ZONES"/>
+            <div style={{background:C.surface,borderRadius:14,padding:14}}>
+              <div style={{display:'flex',gap:3,height:22,borderRadius:4,overflow:'hidden'}}>
+                {[[8,C.hz1],[32,C.hz2],[38,C.hz3],[16,C.hz4],[6,C.hz5]].map(([w,c],i)=>(
+                  <div key={i} style={{width:`${w}%`,background:c,borderRadius:3}}/>
+                ))}
+              </div>
+              <div style={{display:'flex',gap:2,marginTop:8}}>
+                {['Easy','Aerobic','Tempo','Threshold','Max'].map((l,i)=>(
+                  <div key={i} style={{flex:1,textAlign:'center',fontFamily:fft,fontSize:9,color:C.tert}}>{l}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </IPhone>
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: HISTORY
+    // ═══════════════════════════════════════════════════════
+    const HistoryScreen = ({go}) => {
+      const [filter, setFilter] = useState('All');
+      const max = Math.max(...WEEKLY);
+      return (
+        <IPhone>
+          <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+            <NavBar title="History" large/>
+            <div style={{flex:1,overflowY:'auto',padding:'16px 18px 0'}}>
+              {/* Chart */}
+              <div style={{background:C.surface,borderRadius:16,padding:'14px 16px',marginBottom:14}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}}>
+                  <div>
+                    <div style={{fontFamily:fft,fontSize:15,color:C.white,fontWeight:'600'}}>18.5 km this week</div>
+                    <div style={{fontFamily:fft,fontSize:13,color:C.sec}}>247 km total</div>
+                  </div>
+                  <div style={{fontFamily:fft,fontSize:13,color:C.sec}}>32 runs</div>
+                </div>
+                <div style={{display:'flex',alignItems:'flex-end',gap:4,height:72}}>
+                  {WEEKLY.map((v,i)=>{
+                    const h = Math.max(4,(v/max)*68);
+                    const cur = i===WEEKLY.length-1;
+                    return <div key={i} style={{flex:1,height:h,borderRadius:'3px 3px 0 0',background:cur?C.cyan:'rgba(96,96,96,0.32)',alignSelf:'flex-end',transition:'height 0.3s'}}/>;
+                  })}
+                </div>
+              </div>
+              {/* Filter */}
+              <div style={{display:'flex',gap:8,marginBottom:14}}>
+                {['All','Week','Month','Year'].map(f=>(
+                  <button key={f} onClick={()=>setFilter(f)} style={{
+                    padding:'7px 16px',borderRadius:20,border:'none',cursor:'pointer',
+                    background:filter===f?C.cyan:C.surface,
+                    color:filter===f?'#0A0A0A':C.sec,
+                    fontFamily:fft,fontSize:13,fontWeight:'500',
+                  }}>{f}</button>
+                ))}
+              </div>
+              {/* Runs */}
+              <div style={{background:C.surface,borderRadius:14,overflow:'hidden',marginBottom:24}}>
+                {RUNS.map((r,i)=>(
+                  <div key={r.id}>
+                    <div onClick={()=>go('summary')} style={{padding:'12px 16px',display:'flex',alignItems:'center',cursor:'pointer',gap:14}}>
+                      <div style={{textAlign:'center',width:38}}>
+                        <div style={{fontFamily:fft,fontSize:10,color:C.sec,letterSpacing:'0.1em'}}>{r.date.split(' ')[0].toUpperCase()}</div>
+                        <div style={{fontFamily:ff,fontSize:22,fontWeight:'500',color:C.white,lineHeight:1.1}}>{r.date.split(' ')[1]}</div>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontFamily:ff,fontSize:16,fontWeight:'400',color:C.white,letterSpacing:'-0.01em'}}>{fmt.dist(r.dist)} km</div>
+                        <div style={{fontFamily:fft,fontSize:13,color:C.sec}}>{fmt.time(r.dur)} · {fmt.pace(r.pace)}/km</div>
+                      </div>
+                      <span style={{color:C.tert,fontSize:14}}>›</span>
+                    </div>
+                    {i<RUNS.length-1&&<Divider style={{marginLeft:66}}/>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <TabBar active="history" go={go}/>
+          </div>
+        </IPhone>
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: GOALS
+    // ═══════════════════════════════════════════════════════
+    const GoalsScreen = ({go}) => (
+      <IPhone>
+        <NavBar title="Goals" left={<span onClick={()=>go('home')} style={{color:C.cyan,fontFamily:fft,fontSize:16,cursor:'pointer'}}>‹ Home</span>}/>
+        <div style={{padding:'16px 18px 80px'}}>
+          {/* Active goal */}
+          <div style={{background:C.surface,borderRadius:18,padding:'16px',marginBottom:22}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
+              <div>
+                <div style={{fontFamily:fft,fontSize:15,color:C.white,fontWeight:'600'}}>40 km / week</div>
+                <div style={{fontFamily:fft,fontSize:13,color:C.sec}}>May 26 – Jun 1</div>
+              </div>
+              <button style={{background:'none',border:'none',color:C.cyan,fontFamily:fft,fontSize:14,cursor:'pointer'}}>Change</button>
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:22}}>
+              <div style={{position:'relative'}}>
+                <Ring progress={0.46} size={96} stroke={10}/>
+                <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+                  <div style={{fontFamily:ff,fontSize:18,fontWeight:'600',color:C.white}}>46%</div>
+                  <div style={{fontFamily:fft,fontSize:9,color:C.sec,letterSpacing:'0.15em'}}>DONE</div>
+                </div>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',gap:9}}>
+                {[['Achieved','18.5 km'],['Target','40 km'],['Left','21.5 km']].map(([l,v])=>(
+                  <div key={l} style={{display:'flex',gap:12,alignItems:'center'}}>
+                    <div style={{fontFamily:fft,fontSize:13,color:C.sec,width:60}}>{l}</div>
+                    <div style={{fontFamily:fft,fontSize:13,color:C.white,fontWeight:'500'}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {/* Past goals */}
+          <Sec title="PAST GOALS"/>
+          <div style={{background:C.surface,borderRadius:14,overflow:'hidden',marginBottom:22}}>
+            {[
+              {icon:'✓',title:'35 km / week',date:'May 12',ok:true},
+              {icon:'✗',title:'40 km / week',date:'May 5', ok:false},
+              {icon:'✓',title:'30 km / week',date:'Apr 28',ok:true},
+            ].map((g,i)=>(
+              <div key={i}>
+                <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:12}}>
+                  <div style={{fontFamily:fft,fontSize:15,color:g.ok?C.success:C.sec,width:20}}>{g.icon}</div>
+                  <div style={{flex:1,fontFamily:fft,fontSize:14,color:C.white}}>{g.title}</div>
+                  <div style={{fontFamily:fft,fontSize:12,color:C.sec}}>{g.date}</div>
+                </div>
+                {i<2&&<Divider style={{marginLeft:48}}/>}
+              </div>
+            ))}
+          </div>
+          {/* Suggestions */}
+          <Sec title="SUGGESTIONS"/>
+          <div style={{background:C.surface,borderRadius:14,overflow:'hidden'}}>
+            {['42 km / week','4 runs / week','100 km / month'].map((s,i)=>(
+              <div key={i}>
+                <div style={{padding:'14px 16px',display:'flex',alignItems:'center',cursor:'pointer'}}>
+                  <div style={{flex:1,fontFamily:fft,fontSize:15,color:C.white}}>{s}</div>
+                  <div style={{color:C.cyan,fontSize:20,fontWeight:'200'}}>+</div>
+                </div>
+                {i<2&&<Divider/>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </IPhone>
+    );
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN: SETTINGS
+    // ═══════════════════════════════════════════════════════
+    const SettingsScreen = ({go}) => {
+      const [dist, setDist] = useState('km');
+      const [audio, setAudio] = useState(false);
+      const [hrZone, setHrZone] = useState(true);
+      const [resume, setResume] = useState(true);
+      const [maxHR, setMaxHR] = useState(190);
+
+      const Toggle = ({on,set})=>(
+        <div onClick={()=>set(v=>!v)} style={{width:46,height:26,borderRadius:13,background:on?C.cyan:C.elevated,cursor:'pointer',display:'flex',alignItems:'center',padding:'0 2px',transition:'background 0.2s',flexShrink:0}}>
+          <div style={{width:22,height:22,borderRadius:11,background:C.white,transform:on?'translateX(20px)':'translateX(0)',transition:'transform 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.4)'}}/>
+        </div>
+      );
+      const Row = ({label,right,onClick})=>(
+        <div onClick={onClick} style={{padding:'14px 16px',display:'flex',alignItems:'center',background:C.surface,cursor:onClick?'pointer':'default'}}>
+          <div style={{flex:1,fontFamily:fft,fontSize:16,color:C.white}}>{label}</div>
+          {right}
+        </div>
+      );
+      const Group = ({title,children})=>(
+        <div style={{marginBottom:28}}>
+          <div style={{fontFamily:fft,fontSize:12,color:C.sec,padding:'0 16px 8px',letterSpacing:'0.08em'}}>{title}</div>
+          <div style={{borderRadius:14,overflow:'hidden',display:'flex',flexDirection:'column',gap:1}}>{children}</div>
+        </div>
+      );
+      return (
+        <IPhone>
+          <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+            <NavBar title="Settings" large/>
+            <div style={{flex:1,overflowY:'auto',padding:'16px 0 20px'}}>
+              <Group title="RUNNING">
+                <Row label="Distance" right={
+                  <div style={{display:'flex',gap:8}}>
+                    {['km','mi'].map(u=>(
+                      <button key={u} onClick={()=>setDist(u)} style={{padding:'5px 14px',borderRadius:8,border:'none',cursor:'pointer',background:dist===u?C.cyan:C.elevated,color:dist===u?'#0A0A0A':C.sec,fontFamily:fft,fontSize:13,fontWeight:'600'}}>{u}</button>
+                    ))}
+                  </div>
+                }/>
+                <Row label="Lap Alerts" right={
+                  <select style={{background:C.elevated,color:C.white,border:'none',borderRadius:8,padding:'5px 10px',fontFamily:fft,fontSize:13,cursor:'pointer'}}>
+                    {['Every 1 km','Every 5 km','Off'].map(o=><option key={o}>{o}</option>)}
+                  </select>
+                }/>
+                <Row label="Audio Split Cues" right={<Toggle on={audio} set={setAudio}/>}/>
+                <Row label="Resume Countdown" right={<Toggle on={resume} set={setResume}/>}/>
+              </Group>
+              <Group title="APPLE WATCH">
+                <Row label="Primary Metric" right={
+                  <select style={{background:C.elevated,color:C.white,border:'none',borderRadius:8,padding:'5px 10px',fontFamily:fft,fontSize:13,cursor:'pointer'}}>
+                    {['Current Pace','Heart Rate','Distance'].map(o=><option key={o}>{o}</option>)}
+                  </select>
+                }/>
+                <Row label="HR Zone Color" right={<Toggle on={hrZone} set={setHrZone}/>}/>
+              </Group>
+              <Group title="HEALTH">
+                <Row label="HealthKit Sync" right={<span style={{fontFamily:fft,fontSize:13,color:C.success}}>● Active</span>}/>
+                <Row label="Max Heart Rate" right={
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <button onClick={()=>setMaxHR(h=>h-5)} style={{width:30,height:30,borderRadius:15,background:C.elevated,border:'none',color:C.white,fontSize:18,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>−</button>
+                    <span style={{fontFamily:fft,fontSize:14,color:C.white,width:62,textAlign:'center',fontVariantNumeric:'tabular-nums'}}>{maxHR} bpm</span>
+                    <button onClick={()=>setMaxHR(h=>h+5)} style={{width:30,height:30,borderRadius:15,background:C.elevated,border:'none',color:C.white,fontSize:18,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',lineHeight:1}}>+</button>
+                  </div>
+                }/>
+              </Group>
+              <Group title="GOALS">
+                <Row label="Manage Goals" right={<span style={{color:C.tert,fontSize:16}}>›</span>} onClick={()=>go('goals')}/>
+              </Group>
+              <Group title="ABOUT">
+                <Row label="Version" right={<span style={{fontFamily:fft,fontSize:13,color:C.sec}}>1.0.0</span>}/>
+                <Row label="Privacy Policy" right={<span style={{color:C.cyan,fontSize:14}}>↗</span>}/>
+              </Group>
+            </div>
+            <TabBar active="settings" go={go}/>
+          </div>
+        </IPhone>
+      );
+    };
+
+    // ═══════════════════════════════════════════════════════
+    // WATCH SCREENS
+    // ═══════════════════════════════════════════════════════
+
+    const WatchHome = ({go}) => (
+      <Watch>
+        <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'18px 14px',gap:14}}>
+          <div style={{fontFamily:ff,fontSize:13,fontWeight:'600',color:C.sec,letterSpacing:'0.24em'}}>PACE</div>
+          <button onClick={()=>go('watch_countdown')} style={{
+            width:'100%',height:52,borderRadius:15,border:'none',
+            background:C.cyan,color:'#0A0A0A',fontFamily:ff,fontSize:18,fontWeight:'700',
+            letterSpacing:'0.1em',cursor:'pointer',
+          }}>RUN</button>
+        </div>
+      </Watch>
+    );
+
+    const WatchCountdown = ({go}) => {
+      const [n,setN] = useState(3);
+      const [done,setDone] = useState(false);
+      useEffect(()=>{
+        const t = setInterval(()=>{
+          setN(c=>{
+            if(c<=1){clearInterval(t);setDone(true);setTimeout(()=>go('watch_active'),600);return 0;}
+            return c-1;
+          });
+        },1000);
+        return ()=>clearInterval(t);
+      },[go]);
+      return (
+        <Watch>
+          <div style={{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',background:C.bg}}>
+            <div style={{fontFamily:ff,fontSize:done?72:112,fontWeight:'100',color:C.white,letterSpacing:'-0.04em',transition:'font-size 0.25s ease-out'}}>
+              {done?'GO':n}
+            </div>
+          </div>
+        </Watch>
+      );
+    };
+
+    const WatchActive = ({go, page:initPage=0}) => {
+      const [page, setPage] = useState(initPage);
+      const [elapsed, setElapsed] = useState(847);
+      const [dist,    setDist]    = useState(2340);
+      const [pace,    setPace]    = useState(307);
+      const [hr,      setHr]      = useState(156);
+      const [elev,    setElev]    = useState(28);
+      useEffect(()=>{
+        const t = setInterval(()=>{
+          setElapsed(e=>e+1);
+          setDist(d=>d+3);
+          setPace(p=>Math.max(265,Math.min(365,p+(Math.random()>0.5?1:-1)*3)));
+          setHr(h=>Math.max(142,Math.min(176,h+(Math.random()>0.55?1:-1))));
+          setElev(e=>Math.random()>0.87?e+1:e);
+        },1000);
+        return ()=>clearInterval(t);
+      },[]);
+      const avg = Math.round(elapsed/(dist/1000));
+      return (
+        <Watch>
+          <div style={{width:'100%',height:'100%',background:C.bg,display:'flex',flexDirection:'column',position:'relative'}}>
+            {page===0 ? (
+              <>
+                {/* Pace */}
+                <div style={{flex:4,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+                  <div style={{fontFamily:ff,fontSize:54,fontWeight:'100',color:C.white,letterSpacing:'-0.03em',fontVariantNumeric:'tabular-nums',lineHeight:0.9}}>
+                    {fmt.pace(pace)}
+                  </div>
+                  <div style={{fontFamily:fft,fontSize:9,color:C.sec,letterSpacing:'0.2em',marginTop:5,fontWeight:'600'}}>/KM</div>
+                </div>
+                <Divider style={{margin:'0 14px'}}/>
+                {/* Dist / Time */}
+                <div style={{flex:2,display:'flex'}}>
+                  {[{v:fmt.dist(dist),l:'KM'},{v:fmt.time(elapsed),l:'TIME'}].map((m,i)=>(
+                    <React.Fragment key={i}>
+                      {i>0&&<Divider vertical style={{margin:'8px 0'}}/>}
+                      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:3}}>
+                        <div style={{fontFamily:ff,fontSize:20,fontWeight:'300',color:C.white,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+                        <div style={{fontFamily:fft,fontSize:9,color:C.sec,letterSpacing:'0.2em'}}>{m.l}</div>
+                      </div>
+                    </React.Fragment>
+                  ))}
+                </div>
+                {/* HR */}
+                <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,paddingBottom:10}}>
+                  <span style={{color:'#FF9030',fontSize:10}}>♥</span>
+                  <span style={{fontFamily:ff,fontSize:15,color:'#FF9030',fontVariantNumeric:'tabular-nums'}}>{hr}</span>
+                  <span style={{fontFamily:fft,fontSize:9,color:C.sec,letterSpacing:'0.18em'}}>BPM</span>
+                </div>
+              </>
+            ) : (
+              <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'space-evenly',padding:'14px 12px'}}>
+                <div style={{textAlign:'center'}}>
+                  <div style={{fontFamily:ff,fontSize:30,fontWeight:'200',color:C.white,fontVariantNumeric:'tabular-nums'}}>{fmt.pace(avg)}</div>
+                  <div style={{fontFamily:fft,fontSize:9,color:C.sec,letterSpacing:'0.18em'}}>AVG PACE /KM</div>
+                </div>
+                <div style={{textAlign:'center'}}>
+                  <div style={{fontFamily:ff,fontSize:24,fontWeight:'300',color:C.white}}>{`+${elev}m`}</div>
+                  <div style={{fontFamily:fft,fontSize:9,color:C.sec,letterSpacing:'0.18em'}}>ELEVATION +</div>
+                </div>
+                <div style={{display:'flex',gap:22}}>
+                  {[{v:fmt.pace(pace),l:'LAP PACE'},{v:'1',l:'LAP #'}].map(m=>(
+                    <div key={m.l} style={{textAlign:'center'}}>
+                      <div style={{fontFamily:ff,fontSize:18,fontWeight:'300',color:C.white,fontVariantNumeric:'tabular-nums'}}>{m.v}</div>
+                      <div style={{fontFamily:fft,fontSize:8,color:C.sec,letterSpacing:'0.15em'}}>{m.l}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Page dots (vertical, right side) */}
+            <div style={{position:'absolute',right:8,top:'50%',transform:'translateY(-50%)',display:'flex',flexDirection:'column',gap:5}}>
+              {[0,1].map(i=>(
+                <div key={i} onClick={()=>setPage(i)} style={{width:4,height:page===i?10:4,borderRadius:2,background:page===i?C.cyan:C.tert,cursor:'pointer',transition:'height 0.15s'}}/>
+              ))}
+            </div>
+          </div>
+        </Watch>
+      );
+    };
+
+    const WatchPause = ({go}) => {
+      const [confirm, setConfirm] = useState(false);
+      return (
+        <Watch>
+          <div style={{width:'100%',height:'100%',background:C.bg,display:'flex',flexDirection:'column',justifyContent:'flex-end',padding:'0 10px 14px',gap:7}}>
+            <button onClick={()=>go('watch_active')} style={{width:'100%',height:46,borderRadius:13,border:'none',background:C.cyan,color:'#0A0A0A',fontFamily:ff,fontSize:15,fontWeight:'700',cursor:'pointer',letterSpacing:'0.07em'}}>RESUME</button>
+            <button style={{width:'100%',height:38,borderRadius:11,border:'none',background:C.elevated,color:C.white,fontFamily:fft,fontSize:13,fontWeight:'500',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}>
+              <span style={{fontSize:12}}>⚑</span>Mark Lap
+            </button>
+            {!confirm ? (
+              <button onClick={()=>setConfirm(true)} style={{width:'100%',height:32,borderRadius:9,border:'none',background:'none',color:C.error,fontFamily:fft,fontSize:13,fontWeight:'500',cursor:'pointer'}}>End Run</button>
+            ) : (
+              <div style={{display:'flex',gap:7}}>
+                <button onClick={()=>setConfirm(false)} style={{flex:1,height:32,borderRadius:9,border:'none',background:C.elevated,color:C.sec,fontFamily:fft,fontSize:12,cursor:'pointer'}}>No</button>
+                <button onClick={()=>go('watch_summary')} style={{flex:1,height:32,borderRadius:9,border:'none',background:C.error,color:C.white,fontFamily:fft,fontSize:12,fontWeight:'700',cursor:'pointer'}}>Finish</button>
+              </div>
+            )}
+          </div>
+        </Watch>
+      );
+    };
+
+    const WatchSummary = ({go}) => (
+      <Watch>
+        <div style={{width:'100%',height:'100%',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'14px 12px',gap:7}}>
+          <div style={{display:'flex',alignItems:'center',gap:5}}>
+            <span style={{color:C.success,fontSize:11}}>✓</span>
+            <span style={{fontFamily:fft,fontSize:9,color:C.sec,letterSpacing:'0.16em'}}>RUN COMPLETE</span>
+          </div>
+          <div style={{fontFamily:ff,fontSize:38,fontWeight:'200',color:C.white,letterSpacing:'-0.02em',lineHeight:1}}>
+            8.42<span style={{fontSize:18,color:C.sec,marginLeft:3}}>km</span>
+          </div>
+          <div style={{display:'flex',gap:18}}>
+            {[['42:18','TIME'],['5:01','AVG /KM']].map(([v,l])=>(
+              <div key={l} style={{textAlign:'center'}}>
+                <div style={{fontFamily:ff,fontSize:16,fontWeight:'400',color:C.white,fontVariantNumeric:'tabular-nums'}}>{v}</div>
+                <div style={{fontFamily:fft,fontSize:8,color:C.sec,letterSpacing:'0.2em'}}>{l}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:4}}>
+            <span style={{color:C.hz4,fontSize:9}}>♥</span>
+            <span style={{fontFamily:fft,fontSize:10,color:C.sec}}>avg 152 bpm</span>
+          </div>
+          <button onClick={()=>go('watch_home')} style={{background:'none',border:'none',color:C.cyan,fontFamily:fft,fontSize:12,cursor:'pointer',marginTop:2}}>Done</button>
+        </div>
+      </Watch>
+    );
+
+    // ═══════════════════════════════════════════════════════
+    // SCREEN MANIFEST
+    // ═══════════════════════════════════════════════════════
+    const SCREENS = [
+      {id:'welcome',        label:'Welcome',         cat:'Onboarding', device:'iphone'},
+      {id:'permissions',    label:'Permissions',     cat:'Onboarding', device:'iphone'},
+      {id:'home',           label:'Home',            cat:'iPhone',     device:'iphone'},
+      {id:'prerun',         label:'Pre-Run Config',  cat:'iPhone',     device:'iphone'},
+      {id:'countdown',      label:'Countdown',       cat:'iPhone',     device:'iphone'},
+      {id:'active',         label:'Active Run',      cat:'iPhone',     device:'iphone'},
+      {id:'active_pause',   label:'Active + Pause',  cat:'iPhone',     device:'iphone'},
+      {id:'summary',        label:'Run Summary',     cat:'iPhone',     device:'iphone'},
+      {id:'history',        label:'History',         cat:'iPhone',     device:'iphone'},
+      {id:'goals',          label:'Goals',           cat:'iPhone',     device:'iphone'},
+      {id:'settings',       label:'Settings',        cat:'iPhone',     device:'iphone'},
+      {id:'watch_home',     label:'Home',            cat:'Apple Watch',device:'watch'},
+      {id:'watch_countdown',label:'Countdown',       cat:'Apple Watch',device:'watch'},
+      {id:'watch_active',   label:'Active P1',       cat:'Apple Watch',device:'watch'},
+      {id:'watch_active_p2',label:'Active P2',       cat:'Apple Watch',device:'watch'},
+      {id:'watch_pause',    label:'Pause',           cat:'Apple Watch',device:'watch'},
+      {id:'watch_summary',  label:'Summary',         cat:'Apple Watch',device:'watch'},
+    ];
+
+    // ═══════════════════════════════════════════════════════
+    // APP SHELL
+    // ═══════════════════════════════════════════════════════
+    const App = () => {
+      const [screen, setScreen] = useState('welcome');
+      const go = useCallback(id => setScreen(id), []);
+      const idx = SCREENS.findIndex(s => s.id === screen);
+      const cur = SCREENS[idx] || SCREENS[0];
+
+      const render = () => {
+        switch(screen){
+          case 'welcome':         return <WelcomeScreen go={go}/>;
+          case 'permissions':     return <PermissionsScreen go={go}/>;
+          case 'home':            return <HomeScreen go={go}/>;
+          case 'prerun':          return <PreRunScreen go={go}/>;
+          case 'countdown':       return <CountdownScreen go={go}/>;
+          case 'active':          return <ActiveScreen go={go}/>;
+          case 'active_pause':    return <ActiveScreen go={go} showPauseInit/>;
+          case 'summary':         return <SummaryScreen go={go}/>;
+          case 'history':         return <HistoryScreen go={go}/>;
+          case 'goals':           return <GoalsScreen go={go}/>;
+          case 'settings':        return <SettingsScreen go={go}/>;
+          case 'watch_home':      return <WatchHome go={go}/>;
+          case 'watch_countdown': return <WatchCountdown go={go}/>;
+          case 'watch_active':    return <WatchActive go={go} page={0}/>;
+          case 'watch_active_p2': return <WatchActive go={go} page={1}/>;
+          case 'watch_pause':     return <WatchPause go={go}/>;
+          case 'watch_summary':   return <WatchSummary go={go}/>;
+          default:                return <HomeScreen go={go}/>;
+        }
+      };
+
+      const cats = [...new Set(SCREENS.map(s => s.cat))];
+
+      return (
+        <div style={{display:'flex',height:'100vh',overflow:'hidden',fontFamily:fft,background:'#0E0E0F'}}>
+
+          {/* ─── Sidebar ─── */}
+          <div style={{width:214,flexShrink:0,background:'#090909',borderRight:`1px solid #1A1A1C`,display:'flex',flexDirection:'column',overflowY:'auto'}}>
+            <div style={{padding:'22px 18px 16px',borderBottom:'1px solid #1A1A1C'}}>
+              <div style={{fontFamily:ff,fontSize:20,fontWeight:'600',color:C.white,letterSpacing:'0.12em'}}>PACE</div>
+              <div style={{fontFamily:fft,fontSize:11,color:C.tert,marginTop:3,letterSpacing:'0.04em'}}>Interactive Prototype</div>
+            </div>
+            <div style={{flex:1,padding:'6px 0 16px'}}>
+              {cats.map(cat=>(
+                <div key={cat}>
+                  <div style={{padding:'10px 18px 4px',fontFamily:fft,fontSize:9,color:'#444',letterSpacing:'0.14em',fontWeight:'700'}}>
+                    {cat.toUpperCase()}
+                  </div>
+                  {SCREENS.filter(s=>s.cat===cat).map(s=>(
+                    <button key={s.id} onClick={()=>setScreen(s.id)} style={{
+                      width:'100%',padding:'8px 18px',background:screen===s.id?'rgba(0,212,255,0.07)':'none',
+                      border:'none',borderLeft:`2px solid ${screen===s.id?C.cyan:'transparent'}`,
+                      cursor:'pointer',textAlign:'left',display:'flex',alignItems:'center',gap:9,
+                    }}>
+                      <span style={{fontSize:11,opacity:0.7}}>{s.device==='watch'?'⌚':'📱'}</span>
+                      <span style={{fontFamily:fft,fontSize:13,color:screen===s.id?C.cyan:'#777',fontWeight:screen===s.id?'600':'400',letterSpacing:'0.01em'}}>
+                        {s.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ─── Main ─── */}
+          <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+
+            {/* Topbar */}
+            <div style={{height:50,borderBottom:'1px solid #1A1A1C',display:'flex',alignItems:'center',padding:'0 24px',background:'#090909',gap:14,flexShrink:0}}>
+              <button onClick={()=>idx>0&&setScreen(SCREENS[idx-1].id)} disabled={idx===0} style={{
+                background:'none',border:'none',color:idx===0?C.tert:'#777',fontSize:22,cursor:idx===0?'default':'pointer',padding:'0 2px',lineHeight:1,
+              }}>‹</button>
+              <div style={{flex:1,textAlign:'center'}}>
+                <span style={{fontFamily:fft,fontSize:13,color:C.sec}}>{cur.cat}  ·  </span>
+                <span style={{fontFamily:fft,fontSize:13,color:C.white,fontWeight:'600'}}>{cur.label}</span>
+              </div>
+              <button onClick={()=>idx<SCREENS.length-1&&setScreen(SCREENS[idx+1].id)} disabled={idx===SCREENS.length-1} style={{
+                background:'none',border:'none',color:idx===SCREENS.length-1?C.tert:'#777',fontSize:22,cursor:idx===SCREENS.length-1?'default':'pointer',padding:'0 2px',lineHeight:1,
+              }}>›</button>
+            </div>
+
+            {/* Stage */}
+            <div style={{
+              flex:1, overflow:'hidden', display:'flex', alignItems:'center', justifyContent:'center', padding:24,
+              background:'radial-gradient(ellipse at 50% 40%, #141420 0%, #090909 100%)',
+            }}>
+              {render()}
+            </div>
+
+            {/* Progress strip */}
+            <div style={{height:34,borderTop:'1px solid #1A1A1C',background:'#090909',display:'flex',alignItems:'center',justifyContent:'center',gap:5,flexShrink:0}}>
+              {SCREENS.map((s,i)=>(
+                <div key={s.id} onClick={()=>setScreen(s.id)} style={{
+                  height:5, width:screen===s.id?22:5, borderRadius:3,
+                  background:screen===s.id?C.cyan:C.tert,
+                  cursor:'pointer', transition:'all 0.2s ease',
+                }}/>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+  </script>
+</body>
+</html>
