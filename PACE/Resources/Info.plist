@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>PACE</string>
+    <key>CFBundleDisplayName</key>
+    <string>PACE</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.pace.app</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIApplicationSupportsIndirectInputEvents</key>
+    <true/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>PACE tracks your GPS route while you run.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>PACE continues tracking your route when running with the screen off.</string>
+    <key>NSMotionUsageDescription</key>
+    <string>PACE uses motion data to detect auto-pause.</string>
+    <key>NSHealthShareUsageDescription</key>
+    <string>PACE reads heart rate and workout data to improve your run summary.</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>PACE saves your workouts to Apple Health.</string>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>location</string>
+        <string>workout-processing</string>
+    </array>
+</dict>
+</plist>
