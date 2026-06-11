@@ -29,3 +29,15 @@ Compared to the previous draft of this app:
 7. **Contract numbers can't collide** — the sequence counter is re-derived from the max existing `RNT-` number on every save, and "reset" no longer wipes it.
 8. **"Clear invoice archive" actually deletes** from Firestore (was a stub).
 9. Deleting a dress with active rentals is blocked; names are HTML-escaped in all rendered lists; quotes in names no longer break search-result clicks; numeric fields are guarded against missing values.
+
+## Design & polish pass (round 2)
+
+10. **Real, scannable QR codes** — the invoice previously drew a fake hash-pattern that encoded nothing. It now uses the `qrcode-generator` library (error-correction level M) and the QR is actually rendered in the invoice footer next to the map link. If the library fails to load, no fake code is shown.
+11. **Dashboard now earns its space** — the decorative animated panel was replaced with a **"This Week" strip**: the next 7 days with colored counts for pickups (blue), events (rose), and returns (green); tapping a day jumps to that date in the calendar.
+12. **"Today's income" is a real, distinct number** — it now sums deposits taken today + balances collected at today's pickups + late fees recorded on today's returns, instead of duplicating "today's deposits". Pickup dates are now recorded.
+13. **Theme-consistent calendar & global search** — both used hardcoded dark hex values that leaked in light theme; they now use CSS variables and adapt to both themes.
+14. **Analytics PIN is no longer plaintext in the source** — it's stored as a hash on the device (default `1406`), changeable from **Tools → رمز التقارير**, and only prompts once per session.
+15. **Notifications no longer spam** — each reminder (late/pickup/due) fires at most once per day via a per-day dedupe key, and uses the app's own generated icon.
+16. **Cancelling a rental asks for confirmation** before freeing the dress.
+
+> **Security note:** the PIN locks are convenience latches (client-side). Real protection of the financial data must be enforced with **Firestore security rules** — the embedded Firebase config is public by design for web apps.

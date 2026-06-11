@@ -1528,119 +1528,109 @@ function showIosInstallGuide() {
   }
 
   /* ════════════════════════════════════════════════════════
-     ✦ لوحة الزينة المتحركة (تملأ فراغ لوحة التحكم بأناقة)
+     ✦ هذا الأسبوع — نظرة سريعة على مواعيد ٧ أيام
      ════════════════════════════════════════════════════════ */
-  .dash-showcase {
-    position: relative;
-    margin-top: 22px;
-    min-height: 200px;
-    border-radius: 22px;
-    overflow: hidden;
-    display: flex; align-items: center; justify-content: center;
-    border: 1px solid rgba(184,144,96,.2);
-    background:
-      radial-gradient(600px 240px at 78% 18%, rgba(184,144,96,.16), transparent 62%),
-      radial-gradient(520px 260px at 18% 90%, rgba(201,125,138,.16), transparent 60%),
-      linear-gradient(150deg, #1c1117 0%, #140c11 60%, #1a1016 100%);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 14px 44px rgba(0,0,0,.32);
+  .dash-week { margin-top: 22px; border-radius: 22px; }
+  .dash-week-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 22px 10px;
   }
-  body.light-theme .dash-showcase {
-    border-color: rgba(184,144,96,.26);
-    background:
-      radial-gradient(600px 240px at 78% 18%, rgba(184,144,96,.14), transparent 62%),
-      radial-gradient(520px 260px at 18% 90%, rgba(201,125,138,.14), transparent 60%),
-      linear-gradient(150deg, #fffaf6 0%, #f8efe9 60%, #fdf4f4 100%);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 12px 36px rgba(139,74,86,.1);
+  .dash-week-head h3 { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .dash-week-grid {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 8px; padding: 0 22px 14px;
   }
-
-  /* وهج يطفو ببطء في الخلفية */
-  .sc-orb {
-    position: absolute; border-radius: 50%; filter: blur(34px);
-    pointer-events: none; opacity: .7;
+  .dash-week-day {
+    border: 1px solid var(--cream3); border-radius: 12px;
+    padding: 10px 6px; text-align: center; cursor: pointer;
+    background: var(--cream);
+    transition: transform .15s ease, border-color .15s ease;
   }
-  .sc-orb-1 {
-    width: 220px; height: 220px; top: -60px; right: 8%;
-    background: radial-gradient(circle, rgba(184,144,96,.5), transparent 70%);
-    animation: scFloat1 13s ease-in-out infinite;
+  .dash-week-day:hover { transform: translateY(-2px); border-color: var(--gold); }
+  .dash-week-day.today { border-color: var(--rose); box-shadow: 0 0 0 1px var(--rose) inset; }
+  .dash-week-dow { font-size: 10px; color: var(--ink3); font-weight: 700; }
+  .dash-week-num { font-size: 16px; font-weight: 800; color: var(--ink); margin: 2px 0 6px; }
+  .dash-week-day.today .dash-week-num { color: var(--rose); }
+  .dash-week-dots { display: flex; justify-content: center; gap: 3px; min-height: 16px; flex-wrap: wrap; }
+  .dash-week-dot {
+    min-width: 16px; height: 16px; border-radius: 8px;
+    color: #fff; font-size: 9px; font-weight: 800;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 4px;
   }
-  .sc-orb-2 {
-    width: 200px; height: 200px; bottom: -70px; left: 10%;
-    background: radial-gradient(circle, rgba(201,125,138,.5), transparent 70%);
-    animation: scFloat2 16s ease-in-out infinite;
+  .dash-week-legend {
+    display: flex; gap: 14px; padding: 0 22px 16px;
+    font-size: 11px; color: var(--ink3);
   }
-  @keyframes scFloat1 {
-    0%,100% { transform: translate(0,0) scale(1); }
-    50% { transform: translate(-26px,24px) scale(1.12); }
+  .dash-week-legend i {
+    display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+    margin-left: 4px; font-style: normal; vertical-align: -1px;
   }
-  @keyframes scFloat2 {
-    0%,100% { transform: translate(0,0) scale(1); }
-    50% { transform: translate(24px,-20px) scale(1.1); }
-  }
-
-  /* جزيئات ذهبية تصعد بهدوء */
-  .sc-spark {
-    position: absolute; bottom: -14px;
-    width: 6px; height: 6px; border-radius: 50%;
-    background: radial-gradient(circle, #f7e2b4, rgba(247,226,180,0) 70%);
-    pointer-events: none; opacity: 0;
-    animation: scRise linear infinite;
-  }
-  @keyframes scRise {
-    0% { transform: translateY(0) scale(.6); opacity: 0; }
-    12% { opacity: .9; }
-    80% { opacity: .8; }
-    100% { transform: translateY(-220px) scale(1); opacity: 0; }
-  }
-  .sc-s1 { left: 12%; animation-duration: 7s;  animation-delay: 0s;   }
-  .sc-s2 { left: 24%; animation-duration: 9s;  animation-delay: 1.4s; width: 4px; height: 4px; }
-  .sc-s3 { left: 38%; animation-duration: 8s;  animation-delay: 3s;   }
-  .sc-s4 { left: 52%; animation-duration: 10s; animation-delay: .6s;  width: 5px; height: 5px; }
-  .sc-s5 { left: 66%; animation-duration: 7.5s;animation-delay: 2.2s; }
-  .sc-s6 { left: 78%; animation-duration: 9.5s;animation-delay: 4s;   width: 4px; height: 4px; }
-  .sc-s7 { left: 88%; animation-duration: 8.5s;animation-delay: 1s;   }
-
-  /* المحتوى الوسطي */
-  .sc-inner { position: relative; z-index: 2; text-align: center; padding: 26px; }
-  .sc-hanger {
-    width: 54px; height: 54px; margin: 0 auto 14px;
-    color: #d8b07e;
-    animation: scSway 5s ease-in-out infinite;
-    transform-origin: 50% 8%;
-  }
-  .sc-hanger svg { width: 100%; height: 100%; filter: drop-shadow(0 4px 10px rgba(184,144,96,.4)); }
-  @keyframes scSway {
-    0%,100% { transform: rotate(-5deg); }
-    50% { transform: rotate(5deg); }
-  }
-  .sc-title {
-    font-size: 26px; font-weight: 800; letter-spacing: .5px;
-    background: linear-gradient(100deg, #b89060 0%, #f7ead0 40%, #fff7e6 50%, #f7ead0 60%, #b89060 100%);
-    background-size: 220% auto;
-    -webkit-background-clip: text; background-clip: text;
-    -webkit-text-fill-color: transparent; color: transparent;
-    animation: scShine 6s linear infinite;
-  }
-  @keyframes scShine { to { background-position: 220% center; } }
-  .sc-tagline {
-    margin-top: 8px; font-size: 13px; font-weight: 600;
-    color: var(--ink3); letter-spacing: .8px;
-  }
-  body.light-theme .sc-title {
-    background: linear-gradient(100deg, #a8505e 0%, #d8a86a 40%, #f3d9a0 50%, #d8a86a 60%, #a8505e 100%);
-    background-size: 220% auto;
-    -webkit-background-clip: text; background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-
   @media (max-width: 640px) {
-    .dash-showcase { min-height: 168px; margin-top: 16px; }
-    .sc-title { font-size: 21px; }
-    .sc-hanger { width: 44px; height: 44px; }
+    .dash-week { margin-top: 16px; }
+    .dash-week-grid { gap: 4px; padding: 0 12px 10px; }
+    .dash-week-day { padding: 8px 2px; border-radius: 10px; }
+    .dash-week-num { font-size: 14px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .sc-orb, .sc-spark, .sc-hanger, .sc-title { animation: none !important; }
-    .sc-spark { display: none; }
+    .dash-week-day { transition: none !important; transform: none !important; }
   }
+
+  /* ════════════════════════════════════════════════════════
+     ✦ التقويم — ألوان متوافقة مع الثيمين
+     ════════════════════════════════════════════════════════ */
+  .cal-head-row {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    background: var(--cream2); border-bottom: 1px solid var(--cream3);
+  }
+  .cal-head-cell {
+    padding: 10px; text-align: center;
+    font-size: 12px; font-weight: 700; color: var(--ink3);
+  }
+  .cal-head-cell.friday { color: var(--gold); }
+  .cal-cell {
+    min-height: 80px; padding: 6px;
+    border-left: 1px solid var(--cream2); border-bottom: 1px solid var(--cream2);
+    background: transparent; transition: background .1s;
+  }
+  .cal-cell.empty { background: var(--body-bg); opacity: .35; }
+  .cal-cell.has-events { cursor: pointer; }
+  .cal-cell.has-events:hover { background: var(--cream2); }
+  .cal-cell.today { background: color-mix(in srgb, var(--rose-dk) 14%, transparent); }
+  .cal-day-num { font-size: 12px; font-weight: 600; color: var(--ink3); margin-bottom: 4px; }
+  .cal-day-num.friday { color: var(--gold); }
+  .cal-cell.today .cal-day-num { font-weight: 800; color: var(--rose); }
+  .cal-event-chip {
+    border-radius: 4px; padding: 2px 5px; font-size: 10px; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;
+  }
+  .cal-more { font-size: 9px; color: var(--ink3); }
+  .cal-ev-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--cream2);
+  }
+
+  /* ════════════════════════════════════════════════════════
+     ✦ البحث الموحد — ألوان متوافقة مع الثيمين
+     ════════════════════════════════════════════════════════ */
+  .gs-section-label {
+    font-size: 10px; font-weight: 700; color: var(--ink3);
+    letter-spacing: 1px; padding: 8px 20px 4px;
+  }
+  .gs-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px; cursor: pointer;
+    transition: background .1s; border-radius: 10px;
+  }
+  .gs-ic {
+    width: 36px; height: 36px; border-radius: 10px;
+    background: var(--cream2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .gs-title { font-size: 13px; font-weight: 700; color: var(--ink); }
+  .gs-meta { font-size: 11px; color: var(--ink3); margin-top: 1px; }
+  .gs-hint { text-align: center; padding: 40px; color: var(--ink3); font-size: 13px; }
 
   /* ════════════════════════════════════════════════════════
      ✦ تحسينات الحركة: ظهور متدرّج + نبضة + احتفال + تكبير الصور
@@ -1753,6 +1743,7 @@ function showIosInstallGuide() {
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -1975,6 +1966,10 @@ function showIosInstallGuide() {
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c08a9a" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       قفل التطبيق برمز
     </button>
+    <button class="nav-btn" onclick="setAnalyticsPin()" style="color:#8aa0c0;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8aa0c0" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      رمز التقارير
+    </button>
     <button class="nav-btn" onclick="resetData()" style="color:#4a3535;font-size:11px;">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4a3535" stroke-width="2"><polyline points="1,4 1,10 7,10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
       إعادة تهيئة
@@ -2112,25 +2107,17 @@ function showIosInstallGuide() {
       </button>
     </div>
 
-    <!-- لوحة زينة متحركة فاخرة -->
-    <div class="dash-showcase" aria-hidden="true">
-      <span class="sc-orb sc-orb-1"></span>
-      <span class="sc-orb sc-orb-2"></span>
-      <span class="sc-spark sc-s1"></span>
-      <span class="sc-spark sc-s2"></span>
-      <span class="sc-spark sc-s3"></span>
-      <span class="sc-spark sc-s4"></span>
-      <span class="sc-spark sc-s5"></span>
-      <span class="sc-spark sc-s6"></span>
-      <span class="sc-spark sc-s7"></span>
-      <div class="sc-inner">
-        <div class="sc-hanger">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2C10 2 9 3 9 4L7 4L6 7L9 9L9 18L15 18L15 9L18 7L17 4L15 4C15 3 14 2 12 2Z"/>
-          </svg>
-        </div>
-        <div class="sc-title">بوتيك خلود المعني</div>
-        <div class="sc-tagline">أناقة تُروى بكل فستان</div>
+    <!-- هذا الأسبوع: مواعيد الأيام السبعة القادمة -->
+    <div class="card dash-week">
+      <div class="dash-week-head">
+        <h3>هذا الأسبوع</h3>
+        <button class="link-btn" onclick="showPage('calendar', document.querySelector('.nav-btn[onclick*=calendar]'))">التقويم الكامل ←</button>
+      </div>
+      <div class="dash-week-grid" id="dash-week-grid"></div>
+      <div class="dash-week-legend">
+        <span><i style="background:#3b82f6"></i> استلام</span>
+        <span><i style="background:#8b4a56"></i> مناسبة</span>
+        <span><i style="background:#22c55e"></i> إرجاع</span>
       </div>
     </div>
   </div>
@@ -2315,14 +2302,14 @@ function showIosInstallGuide() {
     <!-- Calendar Grid -->
     <div class="card" style="overflow:hidden;">
       <!-- Days Header -->
-      <div style="display:grid;grid-template-columns:repeat(7,1fr);background:#1e1318;border-bottom:1px solid #2a1820;">
-        <div style="padding:10px;text-align:center;font-size:12px;font-weight:700;color:#7a6060;">أحد</div>
-        <div style="padding:10px;text-align:center;font-size:12px;font-weight:700;color:#7a6060;">اثنين</div>
-        <div style="padding:10px;text-align:center;font-size:12px;font-weight:700;color:#7a6060;">ثلاثاء</div>
-        <div style="padding:10px;text-align:center;font-size:12px;font-weight:700;color:#7a6060;">أربعاء</div>
-        <div style="padding:10px;text-align:center;font-size:12px;font-weight:700;color:#7a6060;">خميس</div>
-        <div style="padding:10px;text-align:center;font-size:12px;font-weight:700;color:#b89060;">جمعة</div>
-        <div style="padding:10px;text-align:center;font-size:12px;font-weight:700;color:#7a6060;">سبت</div>
+      <div class="cal-head-row">
+        <div class="cal-head-cell">أحد</div>
+        <div class="cal-head-cell">اثنين</div>
+        <div class="cal-head-cell">ثلاثاء</div>
+        <div class="cal-head-cell">أربعاء</div>
+        <div class="cal-head-cell">خميس</div>
+        <div class="cal-head-cell friday">جمعة</div>
+        <div class="cal-head-cell">سبت</div>
       </div>
       <!-- Days Grid -->
       <div id="cal-grid" style="display:grid;grid-template-columns:repeat(7,1fr);"></div>
@@ -3458,8 +3445,15 @@ function renderDashboard() {
   const pending = rentals.filter(r => ['OPEN','PICKED_UP'].includes(r.status))
                          .reduce((s,r) => s + (r.remaining || 0), 0);
   const today   = new Date().toISOString().slice(0,10);
+  // عربون اليوم: مقدّمات الحجوزات المنشأة اليوم
   const todayDep = rentals.filter(r => r.createdAt === today && r.status !== 'CANCELLED')
                           .reduce((s,r) => s + (r.deposit || 0), 0);
+  // دخل اليوم: العربون + ما حُصِّل عند الاستلام اليوم + غرامات إرجاع اليوم
+  const todayPickup = rentals.filter(r => r.pickupDate === today)
+                             .reduce((s,r) => s + (r.pickupPaidAmount || 0), 0);
+  const todayReturnFees = returns.filter(r => r.retDate === today)
+                                 .reduce((s,r) => s + (r.fee || 0) + (r.paidNow ? (r.paidAmount || 0) : 0), 0);
+  const todayIncome = todayDep + todayPickup + todayReturnFees;
 
   // تاريخ اليوم
   const dayNames = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
@@ -3470,7 +3464,7 @@ function renderDashboard() {
   animateCount(document.getElementById('stat-active'),  active);
   animateCount(document.getElementById('stat-pending'), pending,  'ر.س ');
   animateCount(document.getElementById('stat-today'),   todayDep, 'ر.س ');
-  animateCount(document.getElementById('stat-income'),  todayDep, 'ر.س ');
+  animateCount(document.getElementById('stat-income'),  todayIncome, 'ر.س ');
 
   // ── تنبيهات ──
   const overdue  = rentals.filter(r => ['OPEN','PICKED_UP'].includes(r.status) && r.due && r.due < today);
@@ -3540,6 +3534,8 @@ function renderDashboard() {
   alertsEl.innerHTML = alertsHtml;
 
   // ── آخر الإيجارات (كاردات) ──
+  renderDashboardWeek();
+
   const listEl = document.getElementById('dashboard-rentals-list');
   const recent = [...rentals].reverse().slice(0, 5);
   if (!recent.length) {
@@ -3561,6 +3557,48 @@ function renderDashboard() {
       </div>
     </div>
   `).join('');
+}
+
+// ── هذا الأسبوع (شريط ٧ أيام على لوحة التحكم) ─────────────
+function renderDashboardWeek() {
+  const grid = document.getElementById('dash-week-grid');
+  if (!grid) return;
+  const dow = ['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
+  const todayStr = new Date().toISOString().slice(0,10);
+  let html = '';
+  for (let i = 0; i < 7; i++) {
+    const d = new Date();
+    d.setHours(0,0,0,0);
+    d.setDate(d.getDate() + i);
+    const ds = d.toISOString().slice(0,10);
+    // اجمع أحداث اليوم: استلام/مناسبة/إرجاع
+    let pickups = 0, events = 0, dues = 0;
+    rentals.forEach(r => {
+      if (r.status === 'CANCELLED') return;
+      if (r.pickup === ds) pickups++;
+      if (r.event  === ds) events++;
+      if (r.due    === ds) dues++;
+    });
+    const dots = [];
+    if (pickups) dots.push(`<span class="dash-week-dot" style="background:#3b82f6">${pickups}</span>`);
+    if (events)  dots.push(`<span class="dash-week-dot" style="background:#8b4a56">${events}</span>`);
+    if (dues)    dots.push(`<span class="dash-week-dot" style="background:#22c55e">${dues}</span>`);
+    html += `<div class="dash-week-day ${ds===todayStr?'today':''}" onclick="goCalDate('${ds}')">
+      <div class="dash-week-dow">${dow[d.getDay()]}</div>
+      <div class="dash-week-num">${d.getDate()}</div>
+      <div class="dash-week-dots">${dots.join('')}</div>
+    </div>`;
+  }
+  grid.innerHTML = html;
+}
+
+// فتح التقويم على شهر تاريخ محدد ثم إظهار أحداث ذلك اليوم
+function goCalDate(ds) {
+  const d = new Date(ds);
+  calYear = d.getFullYear();
+  calMonth = d.getMonth();
+  showPage('calendar', document.querySelector('.nav-btn[onclick*=calendar]'));
+  setTimeout(() => showCalDay(ds), 60);
 }
 
 // ── STATUS BADGE ────────────────────────────────────────
@@ -3975,7 +4013,7 @@ function renderCalendar() {
 
   // خلايا فارغة للبداية
   for (let i = 0; i < firstDay; i++) {
-    html += `<div style="min-height:80px;border-left:1px solid #1e1015;border-bottom:1px solid #1e1015;background:#0e0a0c;opacity:.3;"></div>`;
+    html += `<div class="cal-cell empty"></div>`;
   }
 
   for (let d = 1; d <= daysCount; d++) {
@@ -3985,13 +4023,12 @@ function renderCalendar() {
     const dayOfWeek = new Date(calYear, calMonth, d).getDay();
     const isFriday = dayOfWeek === 5;
 
-    html += `<div onclick="showCalDay('${dateStr}')" style="min-height:80px;border-left:1px solid #1e1015;border-bottom:1px solid #1e1015;padding:6px;cursor:${events.length?'pointer':'default'};transition:background .1s;background:${isToday?'rgba(139,74,86,.15)':'#160e12'};"
-      onmouseover="if(${events.length})this.style.background='#1e1318'" onmouseout="this.style.background='${isToday?'rgba(139,74,86,.15)':'#160e12'}'">
-      <div style="font-size:12px;font-weight:${isToday?'800':'600'};color:${isToday?'#c97d8a':isFriday?'#b89060':'#7a6060'};margin-bottom:4px;">${d}</div>
+    html += `<div class="cal-cell ${isToday?'today':''} ${events.length?'has-events':''}" onclick="showCalDay('${dateStr}')">
+      <div class="cal-day-num ${isFriday?'friday':''}">${d}</div>
       ${events.slice(0,3).map(ev => `
-        <div style="background:${ev.color};border-radius:4px;padding:2px 5px;font-size:10px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px;">${escapeHtmlG(ev.label)}</div>
+        <div class="cal-event-chip" style="background:${ev.color};">${escapeHtmlG(ev.label)}</div>
       `).join('')}
-      ${events.length > 3 ? `<div style="font-size:9px;color:#7a6060;">+${events.length-3} أكثر</div>` : ''}
+      ${events.length > 3 ? `<div class="cal-more">+${events.length-3} أكثر</div>` : ''}
     </div>`;
   }
 
@@ -4013,7 +4050,7 @@ function showCalDay(dateStr) {
   const d = new Date(dateStr);
   document.getElementById('cal-events-title').textContent = dayNames[d.getDay()] + ' ' + dateStr;
   document.getElementById('cal-events-list').innerHTML = events.map(ev => `
-    <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #1e1015;">
+    <div class="cal-ev-row">
       <div style="width:4px;height:40px;border-radius:4px;background:${ev.color};flex-shrink:0;"></div>
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--ink);">${escapeHtmlG(ev.label)}</div>
@@ -4062,7 +4099,7 @@ function runGlobalSearch(q) {
   searchSelectedIdx = -1;
 
   if (!q) {
-    results.innerHTML = '<div style="text-align:center;padding:40px;color:#8a7070;font-size:13px;">ابدئي بالكتابة للبحث...</div>';
+    results.innerHTML = '<div class="gs-hint">ابدئي بالكتابة للبحث...</div>';
     return;
   }
 
@@ -4078,20 +4115,19 @@ function runGlobalSearch(q) {
   ).slice(0, 5);
 
   if (foundRentals.length) {
-    html += `<div style="font-size:10px;font-weight:700;color:#5a4040;letter-spacing:1px;padding:8px 20px 4px;">الإيجارات</div>`;
+    html += `<div class="gs-section-label">الإيجارات</div>`;
     const statusAr = { OPEN:'مفتوح', PICKED_UP:'تم الاستلام', RETURNED:'مرتجع', CANCELLED:'ملغي' };
-    const statusColors = { OPEN:'#3b82f6', PICKED_UP:'#b89060', RETURNED:'#22c55e', CANCELLED:'#5a4040' };
+    const statusColors = { OPEN:'#3b82f6', PICKED_UP:'#b89060', RETURNED:'#22c55e', CANCELLED:'#9a8a7a' };
     foundRentals.forEach(r => {
       const safeName = escapeJsAttr(r.name);
       html += `<div class="gs-item" onclick="closeGlobalSearch();showPage('rentals',document.querySelector('.nav-btn[onclick*=rentals]'));setTimeout(()=>{document.getElementById('rental-search').value='${safeName}';renderRentals();},200);"
-        style="display:flex;align-items:center;gap:12px;padding:10px 20px;cursor:pointer;transition:background .1s;"
         onmouseover="this.classList.add('gs-selected')" onmouseout="this.classList.remove('gs-selected')">
-        <div style="width:36px;height:36px;border-radius:10px;background:#1e1318;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">📋</div>
+        <div class="gs-ic">📋</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:700;color:#f0e8e0;">${escapeHtmlG(r.name)}</div>
-          <div style="font-size:11px;color:#6a5050;margin-top:1px;">${r.num} · ${r.phone} · ${r.event || '—'}</div>
+          <div class="gs-title">${escapeHtmlG(r.name)}</div>
+          <div class="gs-meta">${r.num} · ${r.phone} · ${r.event || '—'}</div>
         </div>
-        <div style="font-size:11px;font-weight:700;color:${statusColors[r.status]||'#5a4040'}">${statusAr[r.status]||r.status}</div>
+        <div style="font-size:11px;font-weight:700;color:${statusColors[r.status]||'#9a8a7a'}">${statusAr[r.status]||r.status}</div>
       </div>`;
     });
   }
@@ -4105,41 +4141,35 @@ function runGlobalSearch(q) {
   ).slice(0, 4);
 
   if (foundProducts.length) {
-    html += `<div style="font-size:10px;font-weight:700;color:#5a4040;letter-spacing:1px;padding:8px 20px 4px;margin-top:4px;">الفساتين</div>`;
+    html += `<div class="gs-section-label" style="margin-top:4px;">الفساتين</div>`;
     foundProducts.forEach(p => {
       const status = getProductStatus(p.id);
       const safeTerm = escapeJsAttr(p.code || p.nameAr);
       html += `<div class="gs-item" onclick="closeGlobalSearch();showPage('products',document.querySelector('.nav-btn[onclick*=products]'));setTimeout(()=>{document.getElementById('product-search').value='${safeTerm}';renderProducts();},200);"
-        style="display:flex;align-items:center;gap:12px;padding:10px 20px;cursor:pointer;transition:background .1s;"
         onmouseover="this.classList.add('gs-selected')" onmouseout="this.classList.remove('gs-selected')">
-        <div style="width:36px;height:36px;border-radius:10px;background:#1e1318;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">👗</div>
+        <div class="gs-ic">👗</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:700;color:#f0e8e0;">${escapeHtmlG(p.nameAr)} <span style="color:#b89060;font-size:12px;">${p.code||''}</span></div>
-          <div style="font-size:11px;color:#6a5050;margin-top:1px;">${p.category||''} · ${p.color||''} · ${p.price?.toLocaleString()||0} ر.س</div>
+          <div class="gs-title">${escapeHtmlG(p.nameAr)} <span style="color:var(--gold);font-size:12px;">${p.code||''}</span></div>
+          <div class="gs-meta">${p.category||''} · ${p.color||''} · ${p.price?.toLocaleString()||0} ر.س</div>
         </div>
-        <div style="font-size:11px;font-weight:700;color:${status.color||'#5a4040'}">${status.label}</div>
+        <div style="font-size:11px;font-weight:700;color:${status.color||'#9a8a7a'}">${status.label}</div>
       </div>`;
     });
   }
 
   if (!foundRentals.length && !foundProducts.length) {
-    html = `<div style="text-align:center;padding:40px;color:#9a8080;font-size:13px;">
-      <div style="margin-bottom:12px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8a7070" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+    html = `<div class="gs-hint">
+      <div style="margin-bottom:12px;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
       لا توجد نتائج لـ "${escapeHtmlG(q)}"
     </div>`;
   }
 
   results.innerHTML = html;
-
-  // تطبيق style للـ selected
-  document.querySelectorAll('.gs-item').forEach(el => {
-    el.style.borderRadius = '10px';
-  });
 }
 
-// CSS للـ selected state
+// CSS للـ selected state (متوافق مع الثيمين)
 const gsStyle = document.createElement('style');
-gsStyle.textContent = '.gs-selected { background: #2a1820 !important; }';
+gsStyle.textContent = '.gs-selected { background: var(--cream2) !important; }';
 document.head.appendChild(gsStyle);
 
 // Keyboard shortcut Cmd+K / Ctrl+K
@@ -4255,7 +4285,7 @@ function renderRentals() {
     const rid = r.id;
     const actions = r.status === 'OPEN'
       ? `<button class="btn btn-sm btn-outline" onclick="openPickupModal('${rid}')">استلام</button>
-         <button class="btn btn-sm" style="background:var(--red-lt);color:var(--red);border:none;margin-right:4px" onclick="setStatus('${rid}','CANCELLED')">إلغاء</button>`
+         <button class="btn btn-sm" style="background:var(--red-lt);color:var(--red);border:none;margin-right:4px" onclick="cancelRental('${rid}')">إلغاء</button>`
       : r.status === 'PICKED_UP'
       ? `<button class="btn btn-sm btn-primary" onclick="openReturnModal('${rid}')">تسجيل إرجاع</button>`
       : `<span style="color:var(--ink3);font-size:12px">—</span>`;
@@ -4632,57 +4662,37 @@ function saveRental() {
   })();
 }
 
-// ── QR CODE GENERATOR (pure JS, no external library) ─────
+// ── QR CODE GENERATOR (رمز حقيقي قابل للمسح عبر مكتبة qrcode-generator) ─────
 function makeQRDataUrl(text, size) {
   size = size || 64;
-  // Simple QR-like matrix using text encoding for Maps URL
-  // We encode the URL as a visual pattern using a hash-based grid
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0,0,size,size);
-
-  // Generate deterministic pixel pattern from URL
-  const cellSize = Math.floor(size / 21);
-  const offset   = Math.floor((size - cellSize*21) / 2);
-
-  // Simple hash function
-  function hash(str) {
-    let h = 0x811c9dc5;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h = (h * 0x01000193) >>> 0;
-    }
-    return h;
-  }
-
-  ctx.fillStyle = '#2c2118';
-
-  // Draw finder patterns (corners) - standard QR
-  function drawFinder(x, y) {
-    ctx.fillRect(offset+x*cellSize, offset+y*cellSize, cellSize*7, cellSize*7);
+  try {
+    if (typeof qrcode === 'undefined') throw new Error('qrcode lib not loaded');
+    // typeNumber 0 = auto-fit, مستوى تصحيح أخطاء M ليبقى قابلاً للمسح حتى لو اتسخ
+    const qr = qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    const count = qr.getModuleCount();
+    const cell  = Math.max(1, Math.floor(size / (count + 2))); // هامش وحدتين
+    const dim   = cell * (count + 2);
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = dim;
+    const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff';
-    ctx.fillRect(offset+(x+1)*cellSize, offset+(y+1)*cellSize, cellSize*5, cellSize*5);
+    ctx.fillRect(0, 0, dim, dim);
     ctx.fillStyle = '#2c2118';
-    ctx.fillRect(offset+(x+2)*cellSize, offset+(y+2)*cellSize, cellSize*3, cellSize*3);
-  }
-  drawFinder(0,0); drawFinder(14,0); drawFinder(0,14);
-
-  // Data cells
-  for (let row = 0; row < 21; row++) {
-    for (let col = 0; col < 21; col++) {
-      // Skip finder pattern areas
-      if ((row<9&&col<9)||(row<9&&col>12)||(row>12&&col<9)) continue;
-      const bit = (hash(text + row + ':' + col) & 1);
-      if (bit) {
-        ctx.fillStyle = '#2c2118';
-        ctx.fillRect(offset+col*cellSize, offset+row*cellSize, cellSize, cellSize);
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (qr.isDark(r, c)) {
+          ctx.fillRect((c + 1) * cell, (r + 1) * cell, cell, cell);
+        }
       }
     }
+    return Promise.resolve(canvas.toDataURL('image/png'));
+  } catch (e) {
+    console.error('QR generation failed:', e);
+    // بديل: لا نطبع رمزاً وهمياً — نرجع فارغاً ليُخفى في الفاتورة
+    return Promise.resolve('');
   }
-
-  return Promise.resolve(canvas.toDataURL('image/png'));
 }
 
 // ── PRINT INVOICE ────────────────────────────────────────
@@ -4952,13 +4962,19 @@ body{font-family:'Cairo',sans-serif;background:#fff;color:#2c2118;font-size:11px
       <div style="font-size:15px;font-weight:800;color:#f5e6c8;letter-spacing:.5px;">بوتيك خلود المعني</div>
       <div style="font-size:10px;color:rgba(255,255,255,.7);margin-top:3px;">شكراً لثقتكم بنا ✦</div>
     </div>
-    <div style="text-align:left;direction:ltr;display:flex;flex-direction:column;align-items:flex-start;gap:4px;">
-      <div style="font-size:10px;color:rgba(255,255,255,.85);">📸 kholood_1406</div>
-      <div style="font-size:10px;color:rgba(255,255,255,.85);">👻 kholood_1406</div>
-      <a href="https://maps.app.goo.gl/T4Guv77TiVWaDRvk8" target="_blank"
-         style="display:inline-block;margin-top:4px;background:#b89060;color:#fff;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:10px;font-weight:700;font-family:'Cairo',sans-serif;">
-        📍 موقعنا على الخريطة
-      </a>
+    <div style="display:flex;align-items:center;gap:12px;direction:ltr;">
+      ${qrDataUrl ? `<div style="text-align:center;">
+        <img src="${qrDataUrl}" alt="QR" style="width:62px;height:62px;background:#fff;border-radius:6px;padding:3px;display:block;"/>
+        <div style="font-size:8px;color:rgba(255,255,255,.7);margin-top:2px;">امسح للموقع</div>
+      </div>` : ''}
+      <div style="text-align:left;direction:ltr;display:flex;flex-direction:column;align-items:flex-start;gap:4px;">
+        <div style="font-size:10px;color:rgba(255,255,255,.85);">📸 kholood_1406</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.85);">👻 kholood_1406</div>
+        <a href="https://maps.app.goo.gl/T4Guv77TiVWaDRvk8" target="_blank"
+           style="display:inline-block;margin-top:4px;background:#b89060;color:#fff;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:10px;font-weight:700;font-family:'Cairo',sans-serif;">
+          📍 موقعنا على الخريطة
+        </a>
+      </div>
     </div>
   </div>
   <div class="footer-note">الرجاء الاطلاع على الشروط خلف الفاتورة</div>
@@ -4972,6 +4988,13 @@ body{font-family:'Cairo',sans-serif;background:#fff;color:#2c2118;font-size:11px
 </body></html>`;
 
   return html;
+}
+
+function cancelRental(id) {
+  const r = rentals.find(x => x.id == id);
+  if (!r) return;
+  if (!confirm(`إلغاء حجز ${r.num} للعميلة ${r.name}؟\nسيُحرّر الفستان لإعادة تأجيره. لا يمكن التراجع بسهولة.`)) return;
+  setStatus(id, 'CANCELLED');
 }
 
 async function setStatus(id, status) {
@@ -5009,10 +5032,14 @@ async function confirmPickup() {
   const r  = rentals.find(x => x.id == id);
   if (!r) return;
   const payMethod = document.querySelector('input[name="pickup-pay-method"]:checked')?.value || 'cash';
-  const paidAmount = r.remaining;
+  const paidAmount = r.remaining || 0;
+  const pickupDate = new Date().toISOString().slice(0,10);
 
   r.status    = 'PICKED_UP';
   r.remaining = 0;
+  r.pickupPaidAmount = paidAmount;
+  r.pickupPayMethod  = payMethod;
+  r.pickupDate       = pickupDate;
 
   closeModal('pickup-modal');
   renderRentals();
@@ -5024,7 +5051,8 @@ async function confirmPickup() {
       status: 'PICKED_UP',
       remaining: 0,
       pickupPayMethod: payMethod,
-      pickupPaidAmount: paidAmount
+      pickupPaidAmount: paidAmount,
+      pickupDate: pickupDate
     });
     toast('✅ تم تسجيل الاستلام والدفع');
   } catch(e) {
@@ -5752,10 +5780,15 @@ async function clearInvoiceArchive() {
 }
 
 // ── PIN LOCK (التحليلات) ─────────────────────────────────
-const ANALYTICS_PIN = '1406'; // ← غيّري الرمز هنا
-let analyticsUnlocked = false;
+// الرمز مخزّن كبصمة (hash) في الجهاز، وليس نصاً صريحاً في الكود.
+// الافتراضي 1406 — يمكن تغييره من «أدوات ← رمز التقارير».
+function _analyticsPinHash() {
+  return localStorage.getItem('analyticsPinHash') || _hashPin('1406');
+}
+let analyticsUnlocked = false; // يُفتح مرة واحدة لكل جلسة
 
 function requestAnalyticsPin() {
+  if (analyticsUnlocked) { _showAnalytics(); return; }
   // أظهر التحليلات مضببة في الخلفية
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-analytics').classList.add('active');
@@ -5772,7 +5805,8 @@ function requestAnalyticsPin() {
 
 function checkPin() {
   const entered = document.getElementById('pin-input').value.trim();
-  if (entered === ANALYTICS_PIN) {
+  if (_hashPin(entered) === _analyticsPinHash()) {
+    analyticsUnlocked = true;
     closeModal('pin-modal');
     // أزل الضبابية
     document.getElementById('page-analytics').style.filter = '';
@@ -5785,6 +5819,21 @@ function checkPin() {
     document.getElementById('pin-input').focus();
     setTimeout(() => document.getElementById('pin-error').textContent = '', 2000);
   }
+}
+
+// تغيير رمز التقارير (التحليلات)
+function setAnalyticsPin() {
+  const cur = prompt('للتأكيد، أدخلي رمز التقارير الحالي (الافتراضي 1406):');
+  if (cur === null) return;
+  if (_hashPin(cur) !== _analyticsPinHash()) { alert('الرمز الحالي غير صحيح'); return; }
+  const p1 = prompt('أدخلي رمز تقارير جديد (٤ أرقام):');
+  if (p1 === null) return;
+  if (!/^\d{4}$/.test(p1)) { alert('الرمز يجب أن يكون ٤ أرقام'); return; }
+  const p2 = prompt('أعيدي إدخال الرمز للتأكيد:');
+  if (p1 !== p2) { alert('الرمزان غير متطابقين'); return; }
+  localStorage.setItem('analyticsPinHash', _hashPin(p1));
+  analyticsUnlocked = false;
+  alert('✅ تم تغيير رمز التقارير');
 }
 
 function _showAnalytics() {
@@ -5825,10 +5874,29 @@ function sendNotification(title, body, icon) {
   if (Notification.permission !== 'granted') return;
   new Notification(title, {
     body,
-    icon: icon || 'https://boutique-rental.web.app/icon.png',
+    icon: icon || (document.getElementById('pwa-icon')?.href) || undefined,
     dir: 'rtl',
     lang: 'ar'
   });
+}
+
+// منع تكرار نفس الإشعار: نخزّن مفاتيح ما أُرسل اليوم
+function _notifiedToday() {
+  const today = new Date().toISOString().slice(0,10);
+  let store = {};
+  try { store = JSON.parse(localStorage.getItem('notifiedKeys') || '{}'); } catch(e){}
+  if (store.date !== today) store = { date: today, keys: [] };
+  return store;
+}
+function _markNotified(store, key) {
+  store.keys.push(key);
+  localStorage.setItem('notifiedKeys', JSON.stringify(store));
+}
+function notifyOnce(key, title, body) {
+  const store = _notifiedToday();
+  if (store.keys.includes(key)) return;        // أُرسل اليوم — تجاهل
+  sendNotification(title, body);
+  _markNotified(store, key);
 }
 
 function checkAndNotify() {
@@ -5837,39 +5905,32 @@ function checkAndNotify() {
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0,10);
 
   // مرتجعات متأخرة
-  const overdue = rentals.filter(r =>
-    ['OPEN','PICKED_UP'].includes(r.status) && r.due && r.due < today
-  );
-  overdue.forEach(r => {
-    sendNotification(
+  rentals.filter(r => ['OPEN','PICKED_UP'].includes(r.status) && r.due && r.due < today)
+    .forEach(r => notifyOnce(
+      'late:' + r.num,
       '⚠️ مرتجع متأخر!',
-      `${r.name} — فستان ${r.num} كان المفروض يرجع ${r.due}`,
-    );
-  });
+      `${r.name} — فستان ${r.num} كان المفروض يرجع ${r.due}`
+    ));
 
   // تسليم خلال ٣ أيام
   const in3days = new Date(Date.now() + 3*86400000).toISOString().slice(0,10);
-  const soonDelivery = rentals.filter(r =>
-    r.status === 'OPEN' && r.pickup && r.pickup >= today && r.pickup <= in3days
-  );
-  soonDelivery.forEach(r => {
-    const daysLeft = Math.ceil((new Date(r.pickup) - new Date(today)) / 86400000);
-    sendNotification(
-      daysLeft === 0 ? '📦 تسليم اليوم' : '📦 تسليم قريب',
-      `${r.name} — ${r.num} تستلم فستانها ${daysLeft === 0 ? 'اليوم' : 'بعد ' + daysLeft + ' يوم'}`
-    );
-  });
+  rentals.filter(r => r.status === 'OPEN' && r.pickup && r.pickup >= today && r.pickup <= in3days)
+    .forEach(r => {
+      const daysLeft = Math.ceil((new Date(r.pickup) - new Date(today)) / 86400000);
+      notifyOnce(
+        'pickup:' + r.num,
+        daysLeft === 0 ? '📦 تسليم اليوم' : '📦 تسليم قريب',
+        `${r.name} — ${r.num} تستلم فستانها ${daysLeft === 0 ? 'اليوم' : 'بعد ' + daysLeft + ' يوم'}`
+      );
+    });
 
   // إرجاع غداً
-  const dueTomorrow = rentals.filter(r =>
-    ['OPEN','PICKED_UP'].includes(r.status) && r.due === tomorrow
-  );
-  dueTomorrow.forEach(r => {
-    sendNotification(
+  rentals.filter(r => ['OPEN','PICKED_UP'].includes(r.status) && r.due === tomorrow)
+    .forEach(r => notifyOnce(
+      'due:' + r.num,
       '🔔 إرجاع غداً',
-      `${r.name} — ${r.num} ترجع الفستان غداً`,
-    );
-  });
+      `${r.name} — ${r.num} ترجع الفستان غداً`
+    ));
 }
 
 // زر تفعيل الإشعارات
