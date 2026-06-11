@@ -2157,7 +2157,7 @@ function showIosInstallGuide() {
     </div>
     <div class="search-bar">
       <div class="search-wrap">
-        <input type="text" placeholder="ابحث باسم العميلة أو رقم الحجز…" id="rental-search" oninput="renderRentals()"/>
+        <input type="text" placeholder="ابحث بالاسم، الجوال، رقم الحجز أو رقم الفستان…" id="rental-search" oninput="renderRentals()"/>
       </div>
     </div>
     <div class="filter-pills">
@@ -2174,6 +2174,7 @@ function showIosInstallGuide() {
           <tr>
             <th>رقم الإيجار</th>
             <th>اسم العميلة</th>
+            <th>الفستان</th>
             <th>الهاتف</th>
             <th>تاريخ الإرجاع</th>
             <th>الإجمالي</th>
@@ -2227,6 +2228,15 @@ function showIosInstallGuide() {
         <table>
           <thead><tr><th>#</th><th>الفستان</th><th>الفئة</th><th>عدد الإيجارات</th><th>إجمالي الإيرادات</th><th>الأداء</th></tr></thead>
           <tbody id="top-dresses-table"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3>أفضل العميلات</h3><span style="font-size:12px;color:var(--ink3)">حسب إجمالي المدفوع — كل الفترات</span></div>
+      <div class="card-body">
+        <table>
+          <thead><tr><th>#</th><th>العميلة</th><th>الجوال</th><th>عدد الإيجارات</th><th>إجمالي المدفوع</th><th>متبقٍ</th></tr></thead>
+          <tbody id="top-customers-table"></tbody>
         </table>
       </div>
     </div>
@@ -2563,11 +2573,11 @@ function showIosInstallGuide() {
       </div>
       <div class="form-group">
         <label>رقم الهاتف الأول</label>
-        <input type="text" id="r-phone" placeholder="05xxxxxxxx"/>
+        <input type="tel" inputmode="numeric" maxlength="10" id="r-phone" placeholder="05xxxxxxxx"/>
       </div>
       <div class="form-group">
         <label>رقم الهاتف الثاني <span style="color:var(--ink3);font-weight:400">(اختياري)</span></label>
-        <input type="text" id="r-phone2" placeholder="05xxxxxxxx"/>
+        <input type="tel" inputmode="numeric" maxlength="10" id="r-phone2" placeholder="05xxxxxxxx"/>
       </div>
       <div class="form-group">
         <label>الفستان</label>
@@ -3086,7 +3096,15 @@ function closeModal(id) {
   document.getElementById(id).classList.remove('open');
 }
 function openModal(id) {
-  document.getElementById(id).classList.add('open');
+  const m = document.getElementById(id);
+  m.classList.add('open');
+  // تركيز أول حقل تلقائياً (على الشاشات الكبيرة فقط حتى لا تقفز لوحة مفاتيح الجوال)
+  if (window.innerWidth > 640) {
+    setTimeout(() => {
+      const f = m.querySelector('input:not([type=hidden]):not([readonly]), select, textarea');
+      if (f) f.focus();
+    }, 80);
+  }
 }
 // Close on overlay click
 document.querySelectorAll('.modal-overlay').forEach(o => {
@@ -3490,8 +3508,10 @@ function renderDashboard() {
     soonPickup.forEach(r => {
       const days = Math.ceil((new Date(r.pickup) - new Date(today)) / 86400000);
       const daysLabel = days === 0 ? 'اليوم' : days === 1 ? 'غداً' : 'بعد ' + days + ' أيام';
+      const pr = products.find(x => x.id == r.productId);
+      const dressTag = pr ? escapeHtmlG(pr.code || pr.nameAr) + ' · ' : '';
       alertsHtml += `<div class="alert-item" onclick="showPage('rentals',document.querySelector('.nav-btn[onclick*=rentals]'))">
-        <div class="alert-item-info"><h4>${escapeHtmlG(r.name)}</h4><p>استلام ${daysLabel} · ${r.pickup}</p></div>
+        <div class="alert-item-info"><h4>${escapeHtmlG(r.name)}</h4><p>${dressTag}استلام ${daysLabel} · ${r.pickup}</p></div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="alert-wa-btn" onclick="event.stopPropagation();waRentalMenu('${r.id}')" title="تذكير واتساب">💬</button>
           <span style="background:#1a2a3a;color:#3b82f6;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;">${daysLabel}</span>
@@ -3504,8 +3524,10 @@ function renderDashboard() {
     alertsHtml += `<div class="alert-section-label"><span class="alert-dot dot-red"></span> متأخرة عن الإرجاع</div>`;
     overdue.forEach(r => {
       const days = Math.abs(Math.ceil((new Date(r.due) - new Date(today)) / 86400000));
+      const pr = products.find(x => x.id == r.productId);
+      const dressTag = pr ? escapeHtmlG(pr.code || pr.nameAr) + ' · ' : '';
       alertsHtml += `<div class="alert-item" onclick="showPage('rentals',document.querySelector('.nav-btn[onclick*=rentals]'))">
-        <div class="alert-item-info"><h4>${escapeHtmlG(r.name)}</h4><p>${r.due}</p></div>
+        <div class="alert-item-info"><h4>${escapeHtmlG(r.name)}</h4><p>${dressTag}${r.due}</p></div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="alert-wa-btn" onclick="event.stopPropagation();waRentalMenu('${r.id}')" title="تذكير واتساب">💬</button>
           <span class="badge-late">${days} يوم</span>
@@ -3518,8 +3540,10 @@ function renderDashboard() {
     alertsHtml += `<div class="alert-section-label"><span class="alert-dot dot-amber"></span> إرجاع قريب</div>`;
     upcoming.forEach(r => {
       const days = Math.ceil((new Date(r.due) - new Date(today)) / 86400000);
+      const pr = products.find(x => x.id == r.productId);
+      const dressTag = pr ? escapeHtmlG(pr.code || pr.nameAr) + ' · ' : '';
       alertsHtml += `<div class="alert-item" onclick="showPage('rentals',document.querySelector('.nav-btn[onclick*=rentals]'))">
-        <div class="alert-item-info"><h4>${escapeHtmlG(r.name)}</h4><p>${r.due}</p></div>
+        <div class="alert-item-info"><h4>${escapeHtmlG(r.name)}</h4><p>${dressTag}${r.due}</p></div>
         <div style="display:flex;align-items:center;gap:8px;">
           <button class="alert-wa-btn" onclick="event.stopPropagation();waRentalMenu('${r.id}')" title="تذكير واتساب">💬</button>
           <span class="badge-soon">${days === 0 ? 'اليوم' : days + ' أيام'}</span>
@@ -4267,7 +4291,10 @@ function renderRentals() {
   const today3 = new Date(Date.now() + 3*86400000).toISOString().slice(0,10);
   const today   = new Date().toISOString().slice(0,10);
   let filtered = rentals.filter(r => {
-    const matchSearch = (r.name.toLowerCase().includes(q) || r.num.toLowerCase().includes(q));
+    const p = products.find(x => x.id == r.productId);
+    const matchSearch = (r.name.toLowerCase().includes(q) || r.num.toLowerCase().includes(q) ||
+                         (r.phone||'').includes(q) || (r.phone2||'').includes(q) ||
+                         (p?.code||'').toLowerCase().includes(q) || (p?.nameAr||'').includes(q));
     if (rentalFilter === 'SOON') {
       return matchSearch && r.status === 'OPEN' && r.pickup && r.pickup >= today && r.pickup <= today3;
     }
@@ -4276,13 +4303,32 @@ function renderRentals() {
     }
     return matchSearch && (rentalFilter === 'all' || r.status === rentalFilter);
   });
+
+  // ترتيب ذكي: المتأخرة أولاً، ثم النشطة حسب أقرب موعد إرجاع، ثم المنتهية بالأحدث
+  const urgency = r => {
+    if (['OPEN','PICKED_UP'].includes(r.status)) return (r.due && r.due < today) ? 0 : 1;
+    return 2;
+  };
+  filtered.sort((a, b) => {
+    const ua = urgency(a), ub = urgency(b);
+    if (ua !== ub) return ua - ub;
+    if (ua < 2) return (a.due || '9999').localeCompare(b.due || '9999');
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+
   const tbody = document.getElementById('rentals-table');
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--ink3)">لا توجد نتائج</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--ink3)">لا توجد نتائج</td></tr>`;
     return;
   }
   tbody.innerHTML = filtered.map(r => {
     const rid = r.id;
+    const p = products.find(x => x.id == r.productId);
+    const dressLabel = p
+      ? `${p.code ? `<span style="font-weight:700;color:var(--gold)">${escapeHtmlG(p.code)}</span><br>` : ''}<span style="font-size:11px">${escapeHtmlG(p.nameAr)}</span>`
+      : '—';
+    const lateDays = (['OPEN','PICKED_UP'].includes(r.status) && r.due && r.due < today)
+      ? Math.ceil((new Date(today) - new Date(r.due)) / 86400000) : 0;
     const actions = r.status === 'OPEN'
       ? `<button class="btn btn-sm btn-outline" onclick="openPickupModal('${rid}')">استلام</button>
          <button class="btn btn-sm" style="background:var(--red-lt);color:var(--red);border:none;margin-right:4px" onclick="cancelRental('${rid}')">إلغاء</button>`
@@ -4296,8 +4342,9 @@ function renderRentals() {
       <tr>
         <td class="mono">${r.num}</td>
         <td><strong>${escapeHtmlG(r.name)}</strong></td>
+        <td class="muted">${dressLabel}</td>
         <td class="muted">${r.phone}${r.phone2 ? '<br><span style="font-size:11px">'+r.phone2+'</span>' : ''}</td>
-        <td class="muted">${r.due}</td>
+        <td class="muted">${r.due}${lateDays ? `<br><span class="badge-late" style="font-size:10px;padding:2px 8px;">متأخر ${lateDays} يوم</span>` : ''}</td>
         <td style="font-weight:600">${(r.price || 0).toLocaleString()} ر.س</td>
         <td class="${(r.remaining || 0) > 0 ? 'amount' : 'muted'}">
           ${(r.remaining || 0) > 0 ? r.remaining.toLocaleString() + ' ر.س' : '—'}
@@ -5449,6 +5496,22 @@ function renderAnalytics() {
       </tr>`;
   }).join('');
 
+  // ── TOP CUSTOMERS TABLE ──
+  const topCustomers = buildCustomers().sort((a,b) => b.paid - a.paid).slice(0, 5);
+  const tcEl = document.getElementById('top-customers-table');
+  if (tcEl) {
+    tcEl.innerHTML = topCustomers.length ? topCustomers.map((c, i) => `
+      <tr>
+        <td style="font-weight:700;color:var(--rose-dk)">${i+1}</td>
+        <td><strong>${escapeHtmlG(c.name || '')}</strong></td>
+        <td class="muted">${c.phone || '—'}</td>
+        <td style="font-weight:600">${c.count}</td>
+        <td style="font-weight:600;color:var(--green)">${c.paid.toLocaleString()} ر.س</td>
+        <td class="${c.remaining > 0 ? 'amount' : 'muted'}">${c.remaining > 0 ? c.remaining.toLocaleString() + ' ر.س' : '—'}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--ink3)">لا توجد بيانات بعد</td></tr>`;
+  }
+
   // ── INSIGHTS ──
   const bestMonth = sortedMonths.length
     ? sortedMonths.reduce((a,b) => months[a] > months[b] ? a : b)
@@ -5956,6 +6019,14 @@ async function enableNotifications() {
     toast('⚠️ فعّلي الإشعارات من إعدادات المتصفح');
   }
 }
+
+// ── OFFLINE INDICATOR ────────────────────────────────────
+window.addEventListener('offline', () => {
+  toast('📴 انقطع الاتصال — التعديلات ستُرسل عند عودة الإنترنت');
+});
+window.addEventListener('online', () => {
+  toast('✅ عاد الاتصال بالإنترنت');
+});
 
 // ── INIT ────────────────────────────────────────────────
 function waitForFirebase(cb, tries) {

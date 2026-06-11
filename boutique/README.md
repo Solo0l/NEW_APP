@@ -47,6 +47,16 @@ Compared to the previous draft of this app:
 17. **Printed invoice is now injection-safe** — customer name, phone, notes, and dress color/code are HTML-escaped before they're written into the contract, so a value containing `<`, `>`, or `&` can no longer break the printed page.
 18. **`firestore.rules` shipped** — a deployable security-rules file is included. It restricts access to the app's own collections and rejects everything else, with inline instructions and the auth-locked version to switch to. **Deploy it** (`firebase deploy --only firestore:rules`) — until you do, the database is readable/writable by anyone with the project URL.
 
+## Usability pass (round 4)
+
+19. **Rentals table shows the dress** — each booking row now displays the dress code and name (previously you couldn't tell which dress a booking was for without opening it).
+20. **Overdue rentals are impossible to miss** — a pulsing red "متأخر X يوم" badge appears on the return-date cell of any late booking.
+21. **Smart sorting** — late rentals float to the top, then active ones by nearest return date, then finished/cancelled by recency. The most urgent thing is always first.
+22. **Broader search** — the rentals search now also matches phone numbers and dress codes/names, not just customer name and booking number.
+23. **Top Customers table in analytics** — your 5 best customers by total paid, with rental counts and outstanding balances.
+24. **Dashboard alerts name the dress** — late/upcoming alerts show the dress code so you know what to chase, not just who.
+25. **Quality-of-life** — modals auto-focus their first field on desktop; phone fields bring up the numeric keyboard on mobile (with a 10-digit cap); the app toasts when the connection drops and returns.
+
 ### Verification
 
 Every inline script is parse-checked, all `onclick` handlers resolve to defined functions, all `getElementById` targets exist, and HTML tags balance. Run the same checks anytime with a quick Node script over `index.html`.
