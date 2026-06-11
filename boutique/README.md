@@ -41,3 +41,12 @@ Compared to the previous draft of this app:
 16. **Cancelling a rental asks for confirmation** before freeing the dress.
 
 > **Security note:** the PIN locks are convenience latches (client-side). Real protection of the financial data must be enforced with **Firestore security rules** — the embedded Firebase config is public by design for web apps.
+
+## Quality & hardening pass (round 3)
+
+17. **Printed invoice is now injection-safe** — customer name, phone, notes, and dress color/code are HTML-escaped before they're written into the contract, so a value containing `<`, `>`, or `&` can no longer break the printed page.
+18. **`firestore.rules` shipped** — a deployable security-rules file is included. It restricts access to the app's own collections and rejects everything else, with inline instructions and the auth-locked version to switch to. **Deploy it** (`firebase deploy --only firestore:rules`) — until you do, the database is readable/writable by anyone with the project URL.
+
+### Verification
+
+Every inline script is parse-checked, all `onclick` handlers resolve to defined functions, all `getElementById` targets exist, and HTML tags balance. Run the same checks anytime with a quick Node script over `index.html`.

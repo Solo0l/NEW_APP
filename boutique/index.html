@@ -4738,7 +4738,18 @@ async function printInvoice(rentalId) {
   await _generateHtml(rentalId, qrDataUrl, false);
 }
 
-async function _buildHtml(r, p, retRecord, acc, accList, remaining, totalAfterFee, totalPaid, methodAr, dayNames, qrDataUrl) {  const html = `<!DOCTYPE html>
+async function _buildHtml(r, p, retRecord, acc, accList, remaining, totalAfterFee, totalPaid, methodAr, dayNames, qrDataUrl) {
+  // تأمين بيانات العميلة قبل دمجها في HTML الفاتورة (اسم/ملاحظة فيها رموز < > & لا تكسر الطباعة)
+  const eName  = escapeHtmlG(r.name || '');
+  const ePhone = escapeHtmlG(r.phone || '');
+  const ePhone2= escapeHtmlG(r.phone2 || '');
+  const eNotes = escapeHtmlG(r.notes || '');
+  const eNight = escapeHtmlG(r.eventNight || '');
+  const eDay   = escapeHtmlG(r.eventDay || '');
+  const eCode  = escapeHtmlG(p?.code || '—');
+  const eCat   = escapeHtmlG(p?.category || '—');
+  const eColor = escapeHtmlG(p?.color || '—');
+  const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8"/>
@@ -4870,9 +4881,9 @@ body{font-family:'Cairo',sans-serif;background:#fff;color:#2c2118;font-size:11px
     <div class="sec-title">◆ بيانات العميلة</div>
     <div class="field-row two">
       <span class="field-label">الاسم:</span>
-      <span class="field-val">${r.name}</span>
+      <span class="field-val">${eName}</span>
       <span class="field-label">رقم الجوال:</span>
-      <span class="field-val">${r.phone}${r.phone2 ? ' / ' + r.phone2 : ''}</span>
+      <span class="field-val">${ePhone}${ePhone2 ? ' / ' + ePhone2 : ''}</span>
     </div>
     <div class="field-row two">
       <span class="field-label">تاريخ المناسبة:</span>
@@ -4882,22 +4893,22 @@ body{font-family:'Cairo',sans-serif;background:#fff;color:#2c2118;font-size:11px
     </div>
     <div class="field-row two">
       <span class="field-label">ليلة المناسبة:</span>
-      <span class="field-val">${r.eventNight || '—'}</span>
+      <span class="field-val">${eNight || '—'}</span>
       <span class="field-label">يوم المناسبة:</span>
-      <span class="field-val">${r.eventDay || '—'}</span>
+      <span class="field-val">${eDay || '—'}</span>
     </div>
 
     <!-- DRESS -->
     <div class="sec-title">◆ الفستان</div>
     <div class="field-row two">
       <span class="field-label">رقم الفستان:</span>
-      <span class="field-val" style="font-size:16px;font-weight:800;color:#8b4a56;">${p?.code || '—'}</span>
+      <span class="field-val" style="font-size:16px;font-weight:800;color:#8b4a56;">${eCode}</span>
       <span class="field-label">الفئة:</span>
-      <span class="field-val">${p?.category || '—'}</span>
+      <span class="field-val">${eCat}</span>
     </div>
     <div class="field-row two">
       <span class="field-label">اللون:</span>
-      <span class="field-val">${p?.color || '—'}</span>
+      <span class="field-val">${eColor}</span>
       <span class="field-label">الحالة:</span>
       <span class="field-val">${r.status === 'RETURNED' ? 'تم الإرجاع' : r.status === 'PICKED_UP' ? 'تم الاستلام' : 'محجوز'}</span>
     </div>
@@ -4933,7 +4944,7 @@ body{font-family:'Cairo',sans-serif;background:#fff;color:#2c2118;font-size:11px
 
     <!-- NOTES -->
     <div class="sec-title">◆ ملاحظات وتعليمات التعديل</div>
-    ${[r.notes || '', '', '', ''].slice(0,4).map((n,i) => `
+    ${[eNotes, '', '', ''].slice(0,4).map((n,i) => `
       <div class="note-line">${i===0 && n ? n : ''}</div>`).join('')}
 
     <!-- TERMS -->

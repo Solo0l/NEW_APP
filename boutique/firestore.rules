@@ -1,0 +1,47 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════
+//  قواعد أمان Firestore — بوتيك خلود المعني
+//  Firestore Security Rules — Khulood Al-Maany Boutique
+//
+//  ⚠️ مهم جداً: بدون نشر هذه القواعد، قاعدة بياناتك مفتوحة للجميع
+//     ويمكن لأي شخص يعرف رابط المشروع القراءة والكتابة والحذف.
+//
+//  كيفية النشر:
+//  1) ثبّتي أدوات Firebase:   npm install -g firebase-tools
+//  2) سجّلي الدخول:           firebase login
+//  3) اربطي المشروع:          firebase use boutique-rental
+//  4) انشري القواعد:          firebase deploy --only firestore:rules
+//  (أو الصقي محتوى هذا الملف في: Firebase Console ← Firestore ← Rules)
+// ════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // قائمة المجموعات التي يستخدمها التطبيق
+    function isAppCollection(c) {
+      return c in [
+        'products', 'rentals', 'returns', 'invoices',
+        'galleryFolders', 'galleryPhotos'
+      ];
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // الوضع الحالي (التطبيق بدون تسجيل دخول):
+    // نسمح بالوصول لمجموعات التطبيق فقط، ونمنع أي مجموعة أخرى.
+    // هذا يحدّ من السطح المكشوف لكنه لا يمنع من يعرف الرابط.
+    //
+    // 🔒 للحماية الكاملة: فعّلي "المصادقة" (Authentication) في Firebase
+    //    ثم استبدلي الشرط أدناه بـ:  allow read, write: if request.auth != null;
+    //    وأضيفي تسجيل دخول للمالكة في التطبيق.
+    // ────────────────────────────────────────────────────────────
+    match /{collection}/{docId} {
+      allow read, write: if isAppCollection(collection);
+    }
+
+    // أي مجموعة غير معروفة: مرفوضة تماماً
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
