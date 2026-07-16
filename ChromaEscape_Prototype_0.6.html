@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ChromaEscape — Prototype 0.6 (The Trap)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0c;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;-webkit-tap-highlight-color:transparent;}
+  #c{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;}
+  #hud{position:fixed;top:10px;left:12px;color:#5a6a7a;font-size:12px;letter-spacing:.05em;
+    pointer-events:none;line-height:1.6;text-shadow:0 1px 3px #000;z-index:2;}
+  #hud b{color:#9fd8ff;} #hud i{color:#ff9db3;font-style:normal;}
+  #boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#9fd8ff;font-size:15px;letter-spacing:.1em;background:#0a0a0c;z-index:3;cursor:pointer;text-align:center;line-height:2;padding:20px;}
+  #boot span{opacity:.65;font-size:13px;color:#7d8ea0;line-height:1.9;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="boot">CHROMAESCAPE · prototype 0.6 — the trap
+<span>🔊 sound on — click / tap here, then WASD · arrows · drag to move<br><br>
+one thing to do: <b>draw a loop around the mote to catch it</b><br>
+your line is your lasso — circle the mote and close the ring<br>
+catching it is the only way to score, heal, and get it off you<br>
+each catch it comes back faster. how many can you take?</span></div>
+<script>
+/* PROTOTYPE 0.6 — "THE TRAP". Everything that isn't the trap is deleted.
+   No trail economy, no burn/feed, no orbs, no mood systems. Just:
+     you move and leave a fading lasso · the mote hunts you · CLOSE A LOOP
+     around it to catch it. Catching = your only score, heal, and relief.
+     Each catch it returns faster & bigger. Goal of this build: do players
+     start intentionally chasing the trap, over and over? Nothing else matters. */
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),
+  hud=document.getElementById('hud'),boot=document.getElementById('boot');
+let W=0,H=0; function resize(){W=cv.width=cv.clientWidth||innerWidth;H=cv.height=cv.clientHeight||innerHeight;}
+addEventListener('resize',resize); resize();
+
+const MAX_LIFE=100, START_LIFE=100, SPEED=300, TRAIL_LIFE=2.6, DROP_SPACING=9,
+  MOTE_SPEED0=150, MOTE_SPEED_PER=13, MOTE_DRAIN=30, HEAL=22, HUE=190,
+  LOOP_MIN=12, LOOP_CLOSE_R=17, STROKE_MAX=280;
+
+let player,trail,stroke,mote,fx,fxT,dead,tSurv,caps,best=0,started=false,keys={},touch=null;
+
+function reset(){
+  player={x:W/2,y:H/2,life:START_LIFE,ldx:W/2,ldy:H/2,idleT:0};
+  trail=[]; stroke=[]; fx=[]; fxT=[];
+  mote={x:Math.random()<.5?-40:W+40,y:Math.random()*H,vx:0,vy:0,stun:0,tx:W/2,ty:H/2};
+  dead=false; tSurv=0; caps=0;
+}
+function moteSpeed(){ return MOTE_SPEED0+caps*MOTE_SPEED_PER; }
+function moteR(){ return 12+Math.min(caps,12)*1.1; }
+function begin(){initAudio();if(!started){started=true;boot.style.display='none';reset();}cv.focus&&cv.focus();}
+boot.addEventListener('pointerdown',begin);
+addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true; if(!started){begin();return;} if(dead&&(e.key===' '||e.key==='enter'))reset();});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+cv.addEventListener('pointerdown',e=>{if(!started){begin();return;}if(dead){reset();return;}touch={x:e.clientX,y:e.clientY};});
+cv.addEventListener('pointermove',e=>{if(touch)touch={x:e.clientX,y:e.clientY};});
+cv.addEventListener('pointerup',()=>{touch=null;});
+
+function segInt(a,b,c,d){const r=(p,q,s)=>(q.x-p.x)*(s.y-p.y)-(q.y-p.y)*(s.x-p.x);
+  const d1=r(c,d,a),d2=r(c,d,b),d3=r(a,b,c),d4=r(a,b,d);
+  return ((d1>0)!=(d2>0))&&((d3>0)!=(d4>0));}
+function pip(pt,poly){let n=poly.length,inside=false;
+  for(let i=0,j=n-1;i<n;j=i++){const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>pt.y)!=(yj>pt.y))&&(pt.x<(xj-xi)*(pt.y-yi)/(yj-yi)+xi))inside=!inside;}return inside;}
+
+// ===== FEEL (audio + particles + camera). Silence baseline; sound marks change. =====
+let AC=null,master,audioOn=false,parts=[],shake=0,freeze=0,sfxCd={},heartT=0;
+function initAudio(){ if(audioOn)return; try{ AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(AC.state==='suspended')AC.resume(); master=AC.createGain(); master.gain.value=0.9; master.connect(AC.destination); audioOn=true;}catch(e){} }
+function trapTone(streak){ if(!audioOn)return; const now=AC.currentTime, m=1+Math.min(streak,12)*0.06; // pitch rises with streak
+  const o=AC.createOscillator(),g=AC.createGain();o.type='triangle';o.connect(g);g.connect(master);
+  o.frequency.setValueAtTime(240*m,now);o.frequency.exponentialRampToValueAtTime(720*m,now+0.34);
+  g.gain.setValueAtTime(0.24,now);g.gain.exponentialRampToValueAtTime(0.001,now+0.36);o.start(now);o.stop(now+0.38);
+  const o2=AC.createOscillator(),g2=AC.createGain();o2.type='sine';o2.connect(g2);g2.connect(master);
+  o2.frequency.setValueAtTime(180,now);o2.frequency.exponentialRampToValueAtTime(40,now+0.24);
+  g2.gain.setValueAtTime(0.34,now);g2.gain.exponentialRampToValueAtTime(0.001,now+0.28);o2.start(now);o2.stop(now+0.3); }
+function hitTone(){ if(!audioOn)return; const now=AC.currentTime,o=AC.createOscillator(),g=AC.createGain();
+  o.type='square';o.connect(g);g.connect(master);o.frequency.setValueAtTime(72,now);o.frequency.exponentialRampToValueAtTime(46,now+0.12);
+  g.gain.setValueAtTime(0.22,now);g.gain.exponentialRampToValueAtTime(0.001,now+0.13);o.start(now);o.stop(now+0.15); }
+function sfxHit(){ const t=performance.now(); if(sfxCd.hit&&t-sfxCd.hit<120)return; sfxCd.hit=t; hitTone(); }
+function heartbeat(vol){ if(!audioOn)return; const now=AC.currentTime;
+  const mk=(at,f,v)=>{const o=AC.createOscillator(),g=AC.createGain();o.type='sine';
+    o.frequency.setValueAtTime(f,at);o.frequency.exponentialRampToValueAtTime(f*0.6,at+0.12);
+    g.gain.setValueAtTime(v,at);g.gain.exponentialRampToValueAtTime(0.001,at+0.15);o.connect(g);g.connect(master);o.start(at);o.stop(at+0.17);};
+  mk(now,60,vol); mk(now+0.15,50,vol*0.65); }
+function updateHeartbeat(dt){ if(!audioOn||mote.stun>0){heartT=0;return;}
+  const d=Math.hypot(mote.x-player.x,mote.y-player.y),DANGER=205; if(d>DANGER){heartT=0;return;}
+  const t=1-d/DANGER; heartT-=dt; if(heartT<=0){heartT=0.72-t*0.44; heartbeat(0.05+t*0.09);} }
+function burst(x,y,n,hue,spd,life){ for(let i=0;i<n;i++){const a=Math.random()*6.283,v=spd*(0.35+Math.random());
+  parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:life*(0.6+Math.random()*0.6),t0:life,hue,r:1.4+Math.random()*2.6});} }
+function updateParts(dt){ for(let i=parts.length-1;i>=0;i--){const p=parts[i];p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=0.9;p.vy*=0.9;p.life-=dt;if(p.life<=0)parts.splice(i,1);} }
+function drawParts(){ ctx.globalCompositeOperation='lighter'; for(const p of parts){const k=Math.max(0,p.life/p.t0);
+  ctx.beginPath();ctx.fillStyle=`hsla(${p.hue},100%,62%,${k})`;ctx.shadowBlur=6*k;ctx.shadowColor=`hsl(${p.hue},100%,60%)`;
+  ctx.arc(p.x,p.y,p.r*k+0.4,0,7);ctx.fill();} ctx.globalCompositeOperation='source-over';ctx.shadowBlur=0; }
+
+let last=performance.now();
+function frame(now){let dt=Math.min(0.033,(now-last)/1000);last=now;
+  if(freeze>0){freeze-=dt;} else if(started&&!dead){step(dt);}
+  updateParts(dt); if(shake>0)shake=Math.max(0,shake-dt*55); if(started&&!dead)updateHeartbeat(dt);
+  if(started)draw(); requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+
+function step(dt){
+  tSurv+=dt;
+  let dx=0,dy=0;
+  if(keys['w']||keys['arrowup'])dy-=1; if(keys['s']||keys['arrowdown'])dy+=1;
+  if(keys['a']||keys['arrowleft'])dx-=1; if(keys['d']||keys['arrowright'])dx+=1;
+  if(touch){const vx=touch.x-player.x,vy=touch.y-player.y,d=Math.hypot(vx,vy);if(d>6){dx=vx/d;dy=vy/d;}}
+  const mag=Math.hypot(dx,dy),moving=mag>0.01;
+  if(moving){dx/=mag;dy/=mag;
+    player.x=Math.max(0,Math.min(W,player.x+dx*SPEED*dt));
+    player.y=Math.max(0,Math.min(H,player.y+dy*SPEED*dt));}
+
+  // the LASSO — moving lays a fading trail; a closed loop is a catch
+  if(moving){
+    const dd=Math.hypot(player.x-player.ldx,player.y-player.ldy);
+    if(dd>=DROP_SPACING){
+      const np={x:player.x,y:player.y};
+      trail.push({x:np.x,y:np.y,age:0}); if(trail.length>2000)trail.shift();
+      let hit=-1;
+      if(stroke.length>LOOP_MIN){ const a=stroke[stroke.length-1],b=np;
+        for(let j=0;j<stroke.length-LOOP_MIN;j++){
+          if(Math.hypot(np.x-stroke[j].x,np.y-stroke[j].y)<LOOP_CLOSE_R){hit=j;break;}
+          if(j>0&&segInt(a,b,stroke[j-1],stroke[j])){hit=j;break;} } }
+      stroke.push(np); if(stroke.length>STROKE_MAX)stroke.shift();
+      if(hit>=0){ closeLoop(stroke.slice(hit)); stroke=[]; }
+      player.ldx=player.x; player.ldy=player.y;
+    }
+    player.idleT=0;
+  } else { player.idleT+=dt; if(player.idleT>0.28)stroke.length=0; }
+
+  // trail fades (it's a lasso, not a resource)
+  for(let i=trail.length-1;i>=0;i--){ trail[i].age+=dt; if(trail[i].age>TRAIL_LIFE)trail.splice(i,1); }
+
+  // MOTE — hunts YOU (this is what you circle). Touching you hurts.
+  if(mote.stun>0){ mote.stun-=dt; }
+  else {
+    mote.tx=player.x; mote.ty=player.y;
+    const mvx=player.x-mote.x,mvy=player.y-mote.y,md=Math.hypot(mvx,mvy)||1,sp=moteSpeed();
+    const px=mote.x,py=mote.y;
+    mote.x+=mvx/md*sp*dt; mote.y+=mvy/md*sp*dt; mote.vx=mote.x-px; mote.vy=mote.y-py;
+    if(Math.hypot(mote.x-player.x,mote.y-player.y)<24+moteR()*0.3){
+      player.life-=MOTE_DRAIN*dt; sfxHit(); shake=Math.max(shake,5); }
+  }
+
+  for(let i=fx.length-1;i>=0;i--){fx[i].t-=dt; if(fx[i].t<=0)fx.splice(i,1);}
+  for(let i=fxT.length-1;i>=0;i--){fxT[i].t-=dt; fxT[i].y-=20*dt; if(fxT[i].t<=0)fxT.splice(i,1);}
+  if(player.life<=0){player.life=0;dead=true;best=Math.max(best,caps);}
+}
+
+// THE ONE MECHANIC — close a loop around the mote to catch it
+function closeLoop(poly){
+  if(poly.length<LOOP_MIN)return;
+  fx.push({poly,t:0.6,t0:0.6});
+  if(mote.stun<=0 && pip({x:mote.x,y:mote.y},poly)){
+    caps++; player.life=Math.min(MAX_LIFE,player.life+HEAL);
+    trapTone(caps); freeze=Math.max(freeze,0.09); shake=Math.max(shake,14);
+    burst(mote.x,mote.y,34,190,320,0.6); burst(mote.x,mote.y,12,45,180,0.6);
+    fxT.push({x:mote.x,y:mote.y-20,txt:'CAUGHT ×'+caps,t:1.0,t0:1.0});
+    mote.stun=1.3; const ex=mote.x<W/2?-50:W+50; mote.x=ex; mote.y=Math.random()*H; // flung out, returns faster
+  } else { trapTone(0); freeze=Math.max(freeze,0.04); shake=Math.max(shake,6); } // empty loop still thumps (teaches the verb)
+}
+
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle='#0b0c0f'; ctx.fillRect(0,0,W,H);
+  const lf=Math.max(0,player.life/MAX_LIFE);
+  ctx.save(); if(shake>0)ctx.translate((Math.random()*2-1)*shake,(Math.random()*2-1)*shake);
+
+  // faded trail (the tail of your lasso)
+  ctx.globalCompositeOperation='lighter';
+  for(const p of trail){const a=Math.max(0,1-p.age/TRAIL_LIFE)*0.5;
+    ctx.beginPath();ctx.fillStyle=`hsla(${HUE},100%,60%,${a})`;ctx.arc(p.x,p.y,3.2,0,7);ctx.fill();}
+  // LIVE LASSO — the shape you're drawing right now, bright so you aim it
+  if(stroke.length>1){ctx.strokeStyle=`hsla(${HUE},100%,72%,0.9)`;ctx.lineWidth=3.5;
+    ctx.shadowBlur=12;ctx.shadowColor=`hsl(${HUE},100%,60%)`;
+    ctx.beginPath();ctx.moveTo(stroke[0].x,stroke[0].y);for(const s of stroke)ctx.lineTo(s.x,s.y);ctx.stroke();ctx.shadowBlur=0;}
+  ctx.globalCompositeOperation='source-over';
+
+  // loop-catch flashes
+  for(const f of fx){const k=f.t/f.t0;ctx.beginPath();ctx.moveTo(f.poly[0].x,f.poly[0].y);
+    for(const p of f.poly)ctx.lineTo(p.x,p.y);ctx.closePath();
+    ctx.fillStyle=`hsla(${HUE},100%,70%,${0.3*k})`;ctx.fill();
+    ctx.strokeStyle=`hsla(${HUE},100%,82%,${0.9*k})`;ctx.lineWidth=3;ctx.stroke();}
+
+  // MOTE — alive: eye watches you, squash & stretch, afterimages as it speeds up
+  {
+  const caught=mote.stun>0, baseR=moteR();
+  const spd=Math.hypot(mote.vx||0,mote.vy||0),ang=Math.atan2(mote.vy||0,(mote.vx||0.0001));
+  let stretch=caught?0:Math.min(0.5,spd*0.02);
+  const breathe=1+0.05*Math.sin(tSurv*(caught?3:11));
+  const rHue=caught?210:Math.max(0,340-caps*6); // ring reddens->orange as it escalates
+  if((spd>3.4||caps>4)&&!caught){ctx.globalCompositeOperation='lighter';
+    for(let k=1;k<=2;k++){ctx.beginPath();ctx.fillStyle=`hsla(${rHue},90%,50%,${0.10/k})`;
+      ctx.arc(mote.x-(mote.vx||0)*k*1.6,mote.y-(mote.vy||0)*k*1.6,baseR*(1-0.12*k),0,7);ctx.fill();}
+    ctx.globalCompositeOperation='source-over';}
+  ctx.save();ctx.translate(mote.x,mote.y);ctx.rotate(ang);ctx.scale((1+stretch)*breathe,(1-stretch*0.55)*breathe);
+  ctx.fillStyle=caught?'#20242c':'#080709';ctx.beginPath();ctx.arc(0,0,baseR,0,7);ctx.fill();ctx.restore();
+  ctx.lineWidth=2;ctx.strokeStyle=`hsla(${rHue},${caught?10:85}%,60%,${0.5+0.25*Math.sin(tSurv*(caught?2:10))})`;
+  ctx.shadowBlur=caps>4&&!caught?14:0;ctx.shadowColor=`hsl(${rHue},85%,55%)`;
+  ctx.beginPath();ctx.arc(mote.x,mote.y,baseR+3,0,7);ctx.stroke();ctx.shadowBlur=0;
+  if(caught){ctx.strokeStyle='#8899aa';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(mote.x-5,mote.y-5);ctx.lineTo(mote.x+5,mote.y+5);ctx.moveTo(mote.x+5,mote.y-5);ctx.lineTo(mote.x-5,mote.y+5);ctx.stroke();
+  } else { const eD=Math.atan2((mote.ty||mote.y)-mote.y,(mote.tx||mote.x)-mote.x),pr=baseR*0.42;
+    const ex=mote.x+Math.cos(eD)*baseR*0.26,ey=mote.y+Math.sin(eD)*baseR*0.26,ec=`hsl(${rHue},100%,62%)`;
+    ctx.beginPath();ctx.fillStyle=ec;ctx.shadowBlur=10;ctx.shadowColor=ec;ctx.arc(ex,ey,pr,0,7);ctx.fill();ctx.shadowBlur=0;
+    ctx.beginPath();ctx.fillStyle='rgba(255,255,255,.85)';ctx.arc(ex-pr*0.3,ey-pr*0.3,pr*0.28,0,7);ctx.fill(); }
+  }
+
+  // player
+  if(!dead){const r=13; ctx.globalCompositeOperation='lighter';
+    ctx.beginPath();ctx.fillStyle=`hsl(${HUE},100%,70%)`;ctx.shadowBlur=22;ctx.shadowColor=`hsl(${HUE},100%,65%)`;
+    ctx.arc(player.x,player.y,r,0,7);ctx.fill();ctx.globalCompositeOperation='source-over';ctx.shadowBlur=0;}
+
+  drawParts();
+  // floating catch labels
+  for(const t of fxT){const k=t.t/t.t0;ctx.textAlign='center';ctx.fillStyle=`hsla(${HUE},100%,85%,${k})`;
+    ctx.font='700 20px ui-monospace,monospace';ctx.fillText(t.txt,t.x,t.y);}
+  ctx.restore();
+
+  ctx.fillStyle=`rgba(80,6,10,${(1-lf)*0.5})`;ctx.fillRect(0,0,W,H); // low life = red danger creep
+  if(dead){ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);ctx.textAlign='center';
+    ctx.fillStyle='#cfe6ff';ctx.font='600 36px ui-monospace,monospace';ctx.fillText('caught '+caps,W/2,H/2-24);
+    ctx.font='15px ui-monospace,monospace';ctx.fillStyle='#7f93a8';
+    ctx.fillText(`survived ${tSurv.toFixed(1)}s   ·   best ${best}`,W/2,H/2+8);
+    ctx.fillStyle='#9fd8ff';ctx.fillText('press SPACE / tap to try again',W/2,H/2+40);}
+  hud.innerHTML=dead?'':`caught <b>${caps}</b> · life <i>${Math.ceil(player.life)}</i><br>circle the mote to trap it`;
+}
+</script>
+</body>
+</html>
