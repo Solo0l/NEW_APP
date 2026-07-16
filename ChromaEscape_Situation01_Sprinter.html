@@ -22,9 +22,9 @@
 <div id="boot">CHROMAESCAPE · situation 01 — the sprinter
 <span>🔊 sound on — click / tap here, then WASD · arrows · drag to move<br><br>
 same game: <b>draw a loop around the mote to catch it</b><br>
-NEW: it no longer glides — it COILS, then BURSTS in a short dash<br>
-close the ring while it bursts and it rockets out the gap<br>
-watch the wind-up · wait for the still moment · then seal it</span></div>
+it COILS then BURSTS — wait for the still moment, then seal<br>
+NEW: as the ring tightens it PANICS — thrashing, crying, bolting<br>
+almost had it? it slips out with a gasp. corner it and earn the catch</span></div>
 <script>
 /* SITUATION 01 — "THE SPRINTER" (built on 0.6.1). Core verb unchanged: Escape -> Draw -> Trap.
    ONLY difference: the mote's locomotion is now rest -> coil(telegraph) -> explosive BURST,
@@ -86,6 +86,13 @@ function sfxHit(){ const t=performance.now(); if(sfxCd.hit&&t-sfxCd.hit<120)retu
 function sfxCoil(){ if(!audioOn)return; const now=AC.currentTime,o=AC.createOscillator(),g=AC.createGain(); // soft wind-up tick
   o.type='triangle';o.connect(g);g.connect(master);o.frequency.setValueAtTime(320,now);o.frequency.exponentialRampToValueAtTime(560,now+0.12);
   g.gain.setValueAtTime(0.05,now);g.gain.exponentialRampToValueAtTime(0.001,now+0.13);o.start(now);o.stop(now+0.14); }
+function squeak(p){ if(!audioOn)return; const now=AC.currentTime,o=AC.createOscillator(),g=AC.createGain(); // scared, wavering cry; higher the more cornered
+  o.type='sawtooth';o.connect(g);g.connect(master); const f=680+p*880;
+  o.frequency.setValueAtTime(f,now);o.frequency.linearRampToValueAtTime(f*1.14,now+0.05);o.frequency.linearRampToValueAtTime(f*0.9,now+0.1);
+  g.gain.setValueAtTime(0.045+p*0.05,now);g.gain.exponentialRampToValueAtTime(0.001,now+0.11);o.start(now);o.stop(now+0.12); }
+function gasp(){ if(!audioOn)return; const now=AC.currentTime,o=AC.createOscillator(),g=AC.createGain(); // "phew" — it slipped away
+  o.type='sine';o.connect(g);g.connect(master);o.frequency.setValueAtTime(920,now);o.frequency.exponentialRampToValueAtTime(280,now+0.26);
+  g.gain.setValueAtTime(0.12,now);g.gain.exponentialRampToValueAtTime(0.001,now+0.28);o.start(now);o.stop(now+0.3); }
 function heartbeat(vol){ if(!audioOn)return; const now=AC.currentTime;
   const mk=(at,f,v)=>{const o=AC.createOscillator(),g=AC.createGain();o.type='sine';
     o.frequency.setValueAtTime(f,at);o.frequency.exponentialRampToValueAtTime(f*0.6,at+0.12);
@@ -141,14 +148,15 @@ function step(dt){
   for(let i=trail.length-1;i>=0;i--){ trail[i].age+=dt; if(trail[i].age>TRAIL_LIFE)trail.splice(i,1); }
 
   // MOTE — hunts YOU. 0.6.1: when it senses the lasso closing around it, it BOLTS for the gap.
-  if(mote.stun>0){ mote.stun-=dt; mote.fleeing=false; }
+  if(mote.stun>0){ mote.stun-=dt; mote.fleeing=false; mote.trapTarget=0; }
   else {
-    let tx=player.x, ty=player.y, fleeing=false;
+    let tx=player.x, ty=player.y, fleeing=false, cover=0;
     // sense encirclement: how much of the ring around the mote does the active lasso cover?
     if(stroke.length>10){
       const BINS=16; const cov=new Array(BINS).fill(false); let n=0;
       for(const s of stroke){ const ex=s.x-mote.x, ey=s.y-mote.y;
         if(ex*ex+ey*ey<ENC_R*ENC_R){ const b=((Math.atan2(ey,ex)+Math.PI)/(2*Math.PI)*BINS|0)%BINS; if(!cov[b]){cov[b]=true;n++;} } }
+      cover=n/BINS;                                   // 0..1 = how surrounded it is (drives PANIC)
       if(n>=BINS*0.5){ // surrounded on half its directions -> it knows, and runs for the opening
         let bestStart=0,bestLen=0,curStart=0,curLen=0;
         for(let i=0;i<BINS*2;i++){ if(!cov[i%BINS]){ if(curLen===0)curStart=i; curLen++; if(curLen>bestLen){bestLen=Math.min(curLen,BINS);bestStart=curStart;} } else curLen=0; }
@@ -156,7 +164,8 @@ function step(dt){
           tx=mote.x+Math.cos(ang)*300; ty=mote.y+Math.sin(ang)*300; fleeing=true; }
       }
     }
-    mote.tx=tx; mote.ty=ty; mote.fleeing=fleeing;
+    mote.tx=tx; mote.ty=ty; mote.fleeing=fleeing; mote.trapTarget=cover;
+    mote.fledT = fleeing ? 0.25 : Math.max(0,(mote.fledT||0)-dt);
     // SITUATION 01 — THE SPRINTER: locomotion is now rest -> coil(tell) -> BURST.
     // Only the still 'rest' window is safe to seal in; closing while it coils/bursts lets it rocket out.
     mote.phaseT=(mote.phaseT||0)-dt;
@@ -176,6 +185,22 @@ function step(dt){
     if(Math.hypot(mote.x-player.x,mote.y-player.y)<24+moteR()*0.3){
       player.life-=MOTE_DRAIN*dt; sfxHit(); shake=Math.max(shake,5); }
   }
+
+  // ===== SITUATION 01 v2 — PANIC (feel only, no gameplay effect) =====
+  // the more surrounded it is, the harder it struggles and the higher it cries.
+  mote.trap = (mote.trap||0) + ((mote.trapTarget||0)-(mote.trap||0))*Math.min(1,dt*9);
+  if(mote.stun<=0 && mote.trap>0.42){
+    mote.panicT=(mote.panicT||0)-dt;
+    if(mote.panicT<=0){ squeak(mote.trap); mote.panicT=0.30-mote.trap*0.18; } // frantic squeaks accelerate as it's cornered
+  }
+  // IT BROKE FREE — latch "nearly caught", then fire once as it breaks out: "it got away!" (hope, not nothing)
+  if(mote.trap>0.62) mote.wasHigh=true;
+  if(mote.stun>0) mote.wasHigh=false;
+  if(mote.stun<=0 && mote.wasHigh && mote.trap<0.4){
+    if((mote.fledT||0)>0){ gasp(); burst(mote.x,mote.y,9,190,150,0.45); mote.freeWiggle=0.35; }
+    mote.wasHigh=false;
+  }
+  if(mote.freeWiggle>0)mote.freeWiggle-=dt;
 
   for(let i=fx.length-1;i>=0;i--){fx[i].t-=dt; if(fx[i].t<=0)fx.splice(i,1);}
   for(let i=fxT.length-1;i>=0;i--){fxT[i].t-=dt; fxT[i].y-=20*dt; if(fxT[i].t<=0)fxT.splice(i,1);}
@@ -217,9 +242,12 @@ function draw(){
     ctx.fillStyle=`hsla(${HUE},100%,70%,${0.3*k})`;ctx.fill();
     ctx.strokeStyle=`hsla(${HUE},100%,82%,${0.9*k})`;ctx.lineWidth=3;ctx.stroke();}
 
-  // MOTE — alive: eye watches you, squash & stretch, afterimages as it speeds up
+  // MOTE — alive: eye watches you, squash & stretch, afterimages, and now STRUGGLES when cornered
   {
-  const caught=mote.stun>0, baseR=moteR();
+  const caught=mote.stun>0, baseR=moteR(), tp=mote.trap||0; // tp = panic: how surrounded it is (0..1)
+  ctx.save(); // struggle jitter — the whole creature thrashes as the ring tightens (render only, no gameplay effect)
+  if(!caught&&(tp>0.35||mote.freeWiggle>0)){ const j=tp*tp*6+(mote.freeWiggle>0?4:0);
+    ctx.translate((Math.random()*2-1)*j,(Math.random()*2-1)*j); }
   const spd=Math.hypot(mote.vx||0,mote.vy||0),ang=Math.atan2(mote.vy||0,(mote.vx||0.0001));
   let stretch=caught?0:Math.min(0.5,spd*0.02);
   const breathe=1+0.05*Math.sin(tSurv*(caught?3:11));
@@ -240,10 +268,11 @@ function draw(){
   ctx.beginPath();ctx.arc(mote.x,mote.y,baseR+3,0,7);ctx.stroke();ctx.shadowBlur=0;
   if(caught){ctx.strokeStyle='#8899aa';ctx.lineWidth=2;
     ctx.beginPath();ctx.moveTo(mote.x-5,mote.y-5);ctx.lineTo(mote.x+5,mote.y+5);ctx.moveTo(mote.x+5,mote.y-5);ctx.lineTo(mote.x-5,mote.y+5);ctx.stroke();
-  } else { const eD=Math.atan2((mote.ty||mote.y)-mote.y,(mote.tx||mote.x)-mote.x),pr=baseR*(mote.fleeing?0.52:0.42);
-    const ex=mote.x+Math.cos(eD)*baseR*0.26,ey=mote.y+Math.sin(eD)*baseR*0.26,ec=mote.fleeing?'#ffffff':`hsl(${rHue},100%,62%)`;
-    ctx.beginPath();ctx.fillStyle=ec;ctx.shadowBlur=10;ctx.shadowColor=ec;ctx.arc(ex,ey,pr,0,7);ctx.fill();ctx.shadowBlur=0;
+  } else { const eD=Math.atan2((mote.ty||mote.y)-mote.y,(mote.tx||mote.x)-mote.x),pr=baseR*(0.42+0.34*tp); // pupil blows WIDE with panic
+    const ex=mote.x+Math.cos(eD)*baseR*0.26,ey=mote.y+Math.sin(eD)*baseR*0.26,ec=(mote.fleeing||tp>0.4)?'#ffffff':`hsl(${rHue},100%,62%)`;
+    ctx.beginPath();ctx.fillStyle=ec;ctx.shadowBlur=10+tp*10;ctx.shadowColor=ec;ctx.arc(ex,ey,pr,0,7);ctx.fill();ctx.shadowBlur=0;
     ctx.beginPath();ctx.fillStyle='rgba(255,255,255,.85)';ctx.arc(ex-pr*0.3,ey-pr*0.3,pr*0.28,0,7);ctx.fill(); }
+  ctx.restore(); // end struggle jitter
   }
 
   // player
