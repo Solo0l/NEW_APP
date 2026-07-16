@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ChromaEscape — Prototype 0.1</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0c;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;-webkit-tap-highlight-color:transparent;}
+  #c{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;}
+  #hud{position:fixed;top:10px;left:12px;color:#5a6a7a;font-size:12px;letter-spacing:.05em;
+    pointer-events:none;line-height:1.5;text-shadow:0 1px 3px #000;}
+  #hud b{color:#9fd8ff;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<script>
+/* ============================================================
+   PROTOTYPE 0.1 — sole purpose: is the CORE LOOP fun in 5 min?
+   Core loop: you are the only color in a dead world.
+   Moving LEAKS your life into a glowing trail behind you.
+   The trail DIMS. Loop back and RE-ABSORB it before it dies.
+   Harvest orbs to stay ahead of entropy. One mote hunts light.
+   Go dark = you fade.
+   ONE room, ONE player, ONE enemy, ONE color mechanic. No polish.
+   ============================================================ */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+let W=0,H=0;
+function resize(){ W=cv.width=innerWidth; H=cv.height=innerHeight; }
+addEventListener('resize',resize); resize();
+
+// ---- tunables (the ONLY knobs that decide if this is fun) ----
+const MAX_LIFE      = 100;
+const START_LIFE    = 55;
+const SPEED         = 300;   // player px/s
+const MOVE_LEAK     = 14;    // life/s spent into the trail while moving
+const ENTROPY       = 2.2;   // life/s lost forever (unrecoverable) — the pressure
+const DROP_SPACING  = 7;     // px between trail deposits
+const TRAIL_FADE    = 7;     // seconds a deposit takes to dim to nothing
+const ABSORB_R      = 26;    // pickup radius for re-absorbing trail
+const ABSORB_AGE    = 0.45;  // s before a deposit can be re-absorbed (forces the loop-back)
+const ORB_VALUE     = 34;    // life from an orb
+const ORB_R         = 15;
+const MOTE_SPEED    = 168;    // slower than you, so escapable
+const MOTE_DRAIN    = 34;    // life/s when the mote touches you
+const MOTE_EAT      = 55;    // intensity/s the mote eats from bright trail (the "bait")
+const HUE           = 190;   // you: cyan
+const ORB_HUE       = 43;    // orbs: warm gold
+
+let player, trail, orb, mote, dead, tSurv, orbs, keys, best=0;
+
+function reset(){
+  player={x:W/2,y:H/2,life:START_LIFE,lastDropX:W/2,lastDropY:H/2,flash:0};
+  trail=[];
+  orb=spawnOrb();
+  mote={x:Math.random()<.5?-40:W+40, y:Math.random()*H, energy:0};
+  dead=false; tSurv=0; orbs=0;
+}
+function spawnOrb(){
+  // keep orbs away from the immediate player position
+  let x,y,tries=0;
+  do{ x=60+Math.random()*(W-120); y=60+Math.random()*(H-120); tries++; }
+  while(player && Math.hypot(x-player.x,y-player.y)<220 && tries<20);
+  return {x,y,r:0,t:0};
+}
+
+keys={};
+addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(dead && (e.key===' '||e.key==='enter')) reset();
+});
+addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+// tap / click to restart (and touch-drag to steer)
+let touch=null;
+cv.addEventListener('pointerdown',e=>{ if(dead){reset();return;} touch={x:e.clientX,y:e.clientY}; });
+cv.addEventListener('pointermove',e=>{ if(touch) touch={x:e.clientX,y:e.clientY}; });
+cv.addEventListener('pointerup',()=>{ touch=null; });
+
+reset();
+
+let last=performance.now();
+function frame(now){
+  let dt=Math.min(0.033,(now-last)/1000); last=now;
+  if(!dead) step(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+function step(dt){
+  tSurv+=dt;
+
+  // --- input -> movement vector ---
+  let dx=0,dy=0;
+  if(keys['w']||keys['arrowup'])dy-=1;
+  if(keys['s']||keys['arrowdown'])dy+=1;
+  if(keys['a']||keys['arrowleft'])dx-=1;
+  if(keys['d']||keys['arrowright'])dx+=1;
+  if(touch){ const vx=touch.x-player.x,vy=touch.y-player.y,d=Math.hypot(vx,vy);
+    if(d>6){dx=vx/d;dy=vy/d;} }
+  const mag=Math.hypot(dx,dy);
+  const moving=mag>0.01;
+  if(moving){ dx/=mag; dy/=mag;
+    player.x=Math.max(0,Math.min(W,player.x+dx*SPEED*dt));
+    player.y=Math.max(0,Math.min(H,player.y+dy*SPEED*dt));
+  }
+
+  // --- LEAK: moving spends life into the trail (recoverable) ---
+  if(moving && player.life>0){
+    const leak=MOVE_LEAK*dt;
+    player.life-=leak;
+    const dd=Math.hypot(player.x-player.lastDropX,player.y-player.lastDropY);
+    if(dd>=DROP_SPACING){
+      trail.push({x:player.x,y:player.y,v:leak*(DROP_SPACING/Math.max(dd,1))*6,age:0});
+      player.lastDropX=player.x; player.lastDropY=player.y;
+      if(trail.length>600) trail.shift();
+    }
+  }
+  // --- ENTROPY: the unrecoverable tax that forces you to harvest ---
+  player.life-=ENTROPY*dt;
+
+  // --- trail dims over time (and can be re-absorbed once old enough) ---
+  const fade=(MAX_LIFE)/TRAIL_FADE; // roughly, v units per second
+  for(let i=trail.length-1;i>=0;i--){
+    const p=trail[i]; p.age+=dt; p.v-=fade*dt*0.35;
+    if(p.v<=0.4){ trail.splice(i,1); continue; }
+    if(p.age>ABSORB_AGE){
+      const d=Math.hypot(p.x-player.x,p.y-player.y);
+      if(d<ABSORB_R){ player.life=Math.min(MAX_LIFE,player.life+p.v); trail.splice(i,1); }
+    }
+  }
+
+  // --- orb: pulse in, harvest for a big refill, respawn elsewhere ---
+  orb.t+=dt; orb.r=ORB_R*(0.75+0.25*Math.sin(orb.t*4));
+  if(Math.hypot(orb.x-player.x,orb.y-player.y)<ORB_R+12){
+    player.life=Math.min(MAX_LIFE,player.life+ORB_VALUE);
+    player.flash=1; orbs++; orb=spawnOrb();
+  }
+  if(player.flash>0) player.flash=Math.max(0,player.flash-dt*2.5);
+
+  // --- MOTE: hunts the brightest thing near it (you, or bright trail) ---
+  // score = brightness / (1 + dist) ; picks the juiciest target -> emergent baiting
+  let tx=player.x,ty=player.y,tScore=(player.life)/(1+Math.hypot(player.x-mote.x,player.y-mote.y)*0.02),eat=null;
+  for(const p of trail){
+    const s=p.v/(1+Math.hypot(p.x-mote.x,p.y-mote.y)*0.02);
+    if(s>tScore){ tScore=s; tx=p.x; ty=p.y; eat=p; }
+  }
+  const mvx=tx-mote.x,mvy=ty-mote.y,md=Math.hypot(mvx,mvy)||1;
+  const msp=MOTE_SPEED+mote.energy*22; // feeding makes it a touch faster
+  mote.x+=mvx/md*msp*dt; mote.y+=mvy/md*msp*dt;
+  mote.energy=Math.max(0,mote.energy-dt*0.5);
+  // contact: drain you, or eat the bait trail
+  if(Math.hypot(mote.x-player.x,mote.y-player.y)<24){
+    player.life-=MOTE_DRAIN*dt; player.flash=Math.min(1,player.flash+dt*3);
+  } else if(eat && Math.hypot(mote.x-eat.x,mote.y-eat.y)<20){
+    eat.v-=MOTE_EAT*dt; mote.energy=Math.min(3,mote.energy+dt); // "you fed your hunter"
+  }
+
+  if(player.life<=0){ player.life=0; dead=true; best=Math.max(best,tSurv); }
+}
+
+function draw(){
+  // dead gray world
+  ctx.fillStyle='#0b0c0f'; ctx.fillRect(0,0,W,H);
+
+  const lifeFrac=Math.max(0,player.life/MAX_LIFE);
+
+  // trail (glowing deposits — your spent life)
+  ctx.globalCompositeOperation='lighter';
+  for(const p of trail){
+    const a=Math.min(1,p.v/22);
+    ctx.beginPath();
+    ctx.fillStyle=`hsla(${HUE},100%,${45+a*25}%,${0.10+a*0.5})`;
+    ctx.shadowBlur=12*a; ctx.shadowColor=`hsl(${HUE},100%,60%)`;
+    ctx.arc(p.x,p.y,4+a*4,0,7); ctx.fill();
+  }
+  // orb
+  ctx.beginPath();
+  ctx.fillStyle=`hsl(${ORB_HUE},100%,62%)`;
+  ctx.shadowBlur=26; ctx.shadowColor=`hsl(${ORB_HUE},100%,60%)`;
+  ctx.arc(orb.x,orb.y,orb.r,0,7); ctx.fill();
+  ctx.globalCompositeOperation='source-over';
+  ctx.shadowBlur=0;
+
+  // player — brightness = life
+  if(!dead){
+    const r=13+lifeFrac*7, glow=10+lifeFrac*34+player.flash*30;
+    ctx.globalCompositeOperation='lighter';
+    ctx.beginPath();
+    ctx.fillStyle=`hsl(${HUE},100%,${40+lifeFrac*35}%)`;
+    ctx.shadowBlur=glow; ctx.shadowColor=`hsl(${HUE},100%,65%)`;
+    ctx.arc(player.x,player.y,r,0,7); ctx.fill();
+    if(player.flash>0){ ctx.beginPath();
+      ctx.fillStyle=`hsla(${HUE},100%,90%,${player.flash})`;
+      ctx.arc(player.x,player.y,r*0.6,0,7); ctx.fill(); }
+    ctx.globalCompositeOperation='source-over'; ctx.shadowBlur=0;
+  }
+
+  // mote — the hungry Gray given form (dark core, restless ring)
+  const mr=12+mote.energy*3;
+  ctx.beginPath(); ctx.fillStyle='#070708';
+  ctx.arc(mote.x,mote.y,mr,0,7); ctx.fill();
+  ctx.lineWidth=2;
+  ctx.strokeStyle=`rgba(180,190,205,${0.35+0.25*Math.sin(tSurv*10)})`;
+  ctx.beginPath(); ctx.arc(mote.x,mote.y,mr+3,0,7); ctx.stroke();
+
+  // entropy darkening: the lower your life, the more the world dies to black
+  ctx.fillStyle=`rgba(4,4,7,${(1-lifeFrac)*0.72})`;
+  ctx.fillRect(0,0,W,H);
+
+  if(dead){
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.fillStyle='#cfe6ff';
+    ctx.font='600 34px ui-monospace,monospace';
+    ctx.fillText('you faded',W/2,H/2-26);
+    ctx.font='15px ui-monospace,monospace'; ctx.fillStyle='#7f93a8';
+    ctx.fillText(`survived ${tSurv.toFixed(1)}s   ·   orbs ${orbs}   ·   best ${best.toFixed(1)}s`,W/2,H/2+8);
+    ctx.fillStyle='#9fd8ff';
+    ctx.fillText('press SPACE / tap to try again',W/2,H/2+40);
+  }
+
+  hud.innerHTML = dead ? '' :
+    `life <b>${Math.ceil(player.life)}</b> · survived <b>${tSurv.toFixed(1)}s</b> · orbs <b>${orbs}</b><br>`+
+    `WASD / arrows / drag to move — leak color, loop back to drink it in`;
+}
+</script>
+</body>
+</html>
