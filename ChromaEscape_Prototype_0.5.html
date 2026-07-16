@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ChromaEscape — Prototype 0.5 (Audio Rethink)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0c;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;-webkit-tap-highlight-color:transparent;}
+  #c{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;}
+  #hud{position:fixed;top:10px;left:12px;color:#5a6a7a;font-size:12px;letter-spacing:.05em;
+    pointer-events:none;line-height:1.6;text-shadow:0 1px 3px #000;z-index:2;}
+  #hud b{color:#9fd8ff;} #hud i{color:#ffd27f;font-style:normal;}
+  #boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#9fd8ff;font-size:15px;letter-spacing:.1em;background:#0a0a0c;z-index:3;cursor:pointer;text-align:center;line-height:2;padding:20px;}
+  #boot span{opacity:.6;font-size:12px;color:#6b7c8c;line-height:1.8;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="boot">CHROMAESCAPE · prototype 0.5 — audio rethink
+<span>🔊 sound on — click / tap here to begin, then WASD · arrows · drag<br><br>
+the drone is gone. the world is mostly SILENT now.<br>
+a heartbeat rises only when the mote is closing — and stops when you're safe<br>
+sound now marks change: it grew · it bit you · you trapped it<br><br>
+does the silence make the danger land harder?</span></div>
+<script>
+/* PROTOTYPE 0.5 — audio rethink (gameplay unchanged). Silence is the baseline; the
+   continuous drone is deleted. Threat is an intermittent heartbeat that only exists when
+   the mote is closing and stops the instant you're safe. Sound now marks CHANGE only:
+   grow (crossed a size threshold), burn (edge-triggered once), hit, orb, trap.
+   ---- from 0.3: the SAME three verbs,
+   tuned so the mote constantly changes character (prey/predator/friend/disaster/opportunity):
+   1) BAIT  — it hunts your brightest trail; lead it, or pull it off you / an orb.
+   2) BURN vs FEED — FRESH thick trail HURTS it (prey); DIM scraps FEED it, so it grows
+                     bigger & faster (disaster). One act, opposite fates, by timing.
+   3) TRAP  — close a loop around it to catch it (stun + fling + reset its size).
+   Its ring colour shows its mood. Can these three relationships hold 20 minutes? */
+const cv=document.getElementById('c'), ctx=cv.getContext('2d'),
+  hud=document.getElementById('hud'), boot=document.getElementById('boot');
+let W=0,H=0; function resize(){W=cv.width=cv.clientWidth||innerWidth;H=cv.height=cv.clientHeight||innerHeight;}
+addEventListener('resize',resize); resize();
+
+const MAX_LIFE=100, START_LIFE=60, SPEED=300, MOVE_LEAK=16, ENTROPY=2.0,
+  DROP_SPACING=9, ABSORB_R=26, ABSORB_AGE=0.4, ORB_VALUE=30, ORB_R=15,
+  MOTE_SPEED=170, MOTE_DRAIN=32, HUE=190, ORB_HUE=43,
+  BURN_R=26, BURN_THRESH=3.0, BURN_SLOW=0.32, BURN_BITE=9, MOTE_HURT=1.6, FEED_GROW=2.2,
+  LOOP_MIN=12, LOOP_CLOSE_R=15, STROKE_MAX=240;
+
+let player,trail,stroke,orb,mote,fx,dead,tSurv,orbs,caps,best=0,started=false,keys={},touch=null,pend=0;
+
+function reset(){
+  player={x:W/2,y:H/2,life:START_LIFE,ldx:W/2,ldy:H/2,flash:0};
+  trail=[]; stroke=[]; pend=0; orb=spawnOrb();
+  mote={x:Math.random()<.5?-40:W+40,y:Math.random()*H,energy:0,stun:0}; fx=[];
+  dead=false; tSurv=0; orbs=0; caps=0;
+}
+function spawnOrb(){let x,y,t=0;do{x=60+Math.random()*(W-120);y=60+Math.random()*(H-120);t++;}
+  while(player&&Math.hypot(x-player.x,y-player.y)<200&&t<20);return{x,y,r:0,t:0};}
+function begin(){initAudio();if(!started){started=true;boot.style.display='none';reset();}cv.focus&&cv.focus();}
+boot.addEventListener('pointerdown',begin);
+addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true; if(!started){begin();return;} if(dead&&(e.key===' '||e.key==='enter'))reset();});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+cv.addEventListener('pointerdown',e=>{if(!started){begin();return;}if(dead){reset();return;}touch={x:e.clientX,y:e.clientY};});
+cv.addEventListener('pointermove',e=>{if(touch)touch={x:e.clientX,y:e.clientY};});
+cv.addEventListener('pointerup',()=>{touch=null;});
+
+// segment-intersection + point-in-polygon for loop closing
+function segInt(a,b,c,d){const r=(p,q,s)=>(q.x-p.x)*(s.y-p.y)-(q.y-p.y)*(s.x-p.x);
+  const d1=r(c,d,a),d2=r(c,d,b),d3=r(a,b,c),d4=r(a,b,d);
+  return ((d1>0)!=(d2>0))&&((d3>0)!=(d4>0));}
+function pip(pt,poly){let n=poly.length,inside=false;
+  for(let i=0,j=n-1;i<n;j=i++){const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>pt.y)!=(yj>pt.y))&&(pt.x<(xj-xi)*(pt.y-yi)/(yj-yi)+xi))inside=!inside;}return inside;}
+
+// ================= FEEL LAYER — audio + particles + camera. No gameplay effect. =================
+// AUDIO PHILOSOPHY: silence by default. Sound only marks meaningful CHANGE.
+// No continuous ambience. Threat = an intermittent heartbeat that starts from silence,
+// accelerates as the mote closes, and STOPS when you're safe (the silence is the relief).
+let AC=null,master,audioOn=false;
+let parts=[],shake=0,freeze=0,sfxCd={},heartT=0;
+function initAudio(){ if(audioOn)return; try{
+  AC=new (window.AudioContext||window.webkitAudioContext)();
+  if(AC.state==='suspended')AC.resume();
+  master=AC.createGain(); master.gain.value=0.9; master.connect(AC.destination);
+  audioOn=true;
+}catch(e){} }
+function tone(type){ if(!audioOn)return; const now=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
+  o.connect(g); g.connect(master);
+  const set=(t,f0,f1,pk,dur)=>{o.type=t;o.frequency.setValueAtTime(f0,now);o.frequency.exponentialRampToValueAtTime(f1,now+dur);
+    g.gain.setValueAtTime(pk,now);g.gain.exponentialRampToValueAtTime(0.001,now+dur);o.start(now);o.stop(now+dur+0.02);};
+  switch(type){
+    case 'grow':  set('sawtooth',180,80,0.14,0.28); break;            // ominous swell — it got bigger
+    case 'burn':  set('sawtooth',300,70,0.13,0.16); break;            // short recoil hiss (edge-triggered)
+    case 'hit':   set('square',72,46,0.22,0.13); break;               // it bit you — damage alarm
+    case 'orb':   set('triangle',540,1000,0.16,0.18); break;          // bright reward
+    case 'trap':  set('triangle',220,680,0.24,0.36);                  // the payoff — chime + thud
+      const o2=AC.createOscillator(),g2=AC.createGain();o2.type='sine';o2.connect(g2);g2.connect(master);
+      o2.frequency.setValueAtTime(180,now);o2.frequency.exponentialRampToValueAtTime(40,now+0.24);
+      g2.gain.setValueAtTime(0.34,now);g2.gain.exponentialRampToValueAtTime(0.001,now+0.28);o2.start(now);o2.stop(now+0.3); break;
+  }
+}
+// intermittent heartbeat — the ONLY "ambient" sound, and it only exists in danger
+function heartbeat(vol){ if(!audioOn)return; const now=AC.currentTime;
+  const mk=(at,f,v)=>{const o=AC.createOscillator(),g=AC.createGain();o.type='sine';
+    o.frequency.setValueAtTime(f,at);o.frequency.exponentialRampToValueAtTime(f*0.6,at+0.12);
+    g.gain.setValueAtTime(v,at);g.gain.exponentialRampToValueAtTime(0.001,at+0.15);
+    o.connect(g);g.connect(master);o.start(at);o.stop(at+0.17);};
+  mk(now,60,vol); mk(now+0.15,50,vol*0.65); } // lub-dub
+function updateHeartbeat(dt){ if(!audioOn||mote.stun>0){ heartT=0; return; }
+  const d=Math.hypot(mote.x-player.x,mote.y-player.y), DANGER=205;
+  if(d>DANGER){ heartT=0; return; }        // safe = SILENCE
+  const t=1-d/DANGER;                       // 0 at edge .. 1 on top of you
+  heartT-=dt; if(heartT<=0){ heartT=0.72-t*0.44; heartbeat(0.05+t*0.09); } }
+function sfx(type,gap){ const t=performance.now(); if(sfxCd[type]&&t-sfxCd[type]<(gap||0))return; sfxCd[type]=t; tone(type); }
+function burst(x,y,n,hue,spd,life){ for(let i=0;i<n;i++){const a=Math.random()*6.283,v=spd*(0.35+Math.random());
+  parts.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:life*(0.6+Math.random()*0.6),t0:life,hue,r:1.4+Math.random()*2.6});} }
+function updateParts(dt){ for(let i=parts.length-1;i>=0;i--){const p=parts[i];p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=0.9;p.vy*=0.9;p.life-=dt;if(p.life<=0)parts.splice(i,1);} }
+function drawParts(){ ctx.globalCompositeOperation='lighter'; for(const p of parts){const k=Math.max(0,p.life/p.t0);
+  ctx.beginPath();ctx.fillStyle=`hsla(${p.hue},100%,62%,${k})`;ctx.shadowBlur=6*k;ctx.shadowColor=`hsl(${p.hue},100%,60%)`;
+  ctx.arc(p.x,p.y,p.r*k+0.4,0,7);ctx.fill();} ctx.globalCompositeOperation='source-over';ctx.shadowBlur=0; }
+
+let last=performance.now();
+function frame(now){let dt=Math.min(0.033,(now-last)/1000);last=now;
+  if(freeze>0){ freeze-=dt; }               // hit-stop — the world holds its breath
+  else if(started&&!dead){ step(dt); }
+  updateParts(dt); if(shake>0)shake=Math.max(0,shake-dt*55); if(started&&!dead)updateHeartbeat(dt);
+  if(started)draw(); requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+
+function step(dt){
+  tSurv+=dt;
+  let dx=0,dy=0;
+  if(keys['w']||keys['arrowup'])dy-=1; if(keys['s']||keys['arrowdown'])dy+=1;
+  if(keys['a']||keys['arrowleft'])dx-=1; if(keys['d']||keys['arrowright'])dx+=1;
+  if(touch){const vx=touch.x-player.x,vy=touch.y-player.y,d=Math.hypot(vx,vy);if(d>6){dx=vx/d;dy=vy/d;}}
+  const mag=Math.hypot(dx,dy),moving=mag>0.01;
+  if(moving){dx/=mag;dy/=mag;
+    player.x=Math.max(0,Math.min(W,player.x+dx*SPEED*dt));
+    player.y=Math.max(0,Math.min(H,player.y+dy*SPEED*dt));}
+
+  // 1) LEAK — drop trail + build the current stroke; detect a closed LOOP
+  if(moving&&player.life>0){
+    pend+=MOVE_LEAK*dt; player.life-=MOVE_LEAK*dt;
+    const dd=Math.hypot(player.x-player.ldx,player.y-player.ldy);
+    if(dd>=DROP_SPACING){
+      const np={x:player.x,y:player.y};
+      trail.push({x:np.x,y:np.y,v:pend,age:0}); pend=0;
+      if(trail.length>1400)trail.shift();
+      // loop test against earlier stroke points
+      let hit=-1;
+      if(stroke.length>LOOP_MIN){
+        const a=stroke[stroke.length-1],b=np;
+        for(let j=0;j<stroke.length-LOOP_MIN;j++){
+          if(Math.hypot(np.x-stroke[j].x,np.y-stroke[j].y)<LOOP_CLOSE_R){hit=j;break;}
+          if(j>0&&segInt(a,b,stroke[j-1],stroke[j])){hit=j;break;}
+        }
+      }
+      stroke.push(np); if(stroke.length>STROKE_MAX)stroke.shift();
+      if(hit>=0){ closeLoop(stroke.slice(hit)); stroke=[]; }
+      player.ldx=player.x; player.ldy=player.y;
+    }
+    player.idleT=0;
+  } else { // brief pauses (keyboard corners) are OK; a long stop ends the gesture
+    player.idleT=(player.idleT||0)+dt; if(player.idleT>0.28){stroke.length=0;pend=0;}
+  }
+
+  player.life-=ENTROPY*dt;
+
+  // trail fade + DRINK (reabsorb)
+  for(let i=trail.length-1;i>=0;i--){const p=trail[i];p.age+=dt;p.v*=Math.exp(-dt/2.6);
+    if(p.v<0.05){trail.splice(i,1);continue;}
+    if(p.age>ABSORB_AGE&&Math.hypot(p.x-player.x,p.y-player.y)<ABSORB_R){
+      player.life=Math.min(MAX_LIFE,player.life+p.v);trail.splice(i,1);}} // (no sip sound — visual conveys it)
+
+  // orb harvest
+  orb.t+=dt; orb.r=ORB_R*(0.75+0.25*Math.sin(orb.t*4));
+  if(Math.hypot(orb.x-player.x,orb.y-player.y)<ORB_R+12){
+    player.life=Math.min(MAX_LIFE,player.life+ORB_VALUE);player.flash=1;orbs++;
+    sfx('orb'); burst(orb.x,orb.y,14,ORB_HUE,200,0.5); orb=spawnOrb();}
+  if(player.flash>0)player.flash=Math.max(0,player.flash-dt*2.5);
+
+  // MOTE — the three relationships live here. It hunts the brightest thing;
+  // FRESH/thick trail BURNS it (prey), DIM scraps FEED it (disaster), YOU are the target of last resort (predator).
+  if(mote.stun>0){ mote.stun-=dt; mote.mood='caught'; }
+  else {
+    // pick the brightest target: you, or a bright trail crumb (this is what BAIT exploits)
+    let tx=player.x,ty=player.y,tS=player.life/(1+Math.hypot(player.x-mote.x,player.y-mote.y)*0.02),onTrail=false;
+    for(const p of trail){const s=p.v/(1+Math.hypot(p.x-mote.x,p.y-mote.y)*0.02);
+      if(s>tS){tS=s;tx=p.x;ty=p.y;onTrail=true;}}
+    // local heat around the mote, and how much it's nibbling
+    let heat=0,nibble=0; for(const p of trail){const d=Math.hypot(p.x-mote.x,p.y-mote.y);
+      if(d<BURN_R){heat+=p.v; const bite=BURN_BITE*dt*(1-d/BURN_R); if(p.v>0.05){p.v-=bite;nibble+=bite;}}}
+    let sp=MOTE_SPEED+mote.energy*24;
+    mote.tx=tx; mote.ty=ty; mote.lockPlayer=!onTrail;      // FEEL: what its eye looks at
+    if(heat>BURN_THRESH){ // FRESH wall: it recoils, slows, and is HURT (shrinks) -> PREY
+      sp*=BURN_SLOW; mote.energy=Math.max(0,mote.energy-dt*MOTE_HURT); mote.mood='hurt';
+      if(!mote.wasBurning){ sfx('burn'); mote.wasBurning=true; } // edge-triggered: one hiss per engagement
+      shake=Math.max(shake,3); burst(mote.x,mote.y,2,190,90,0.35);
+    } else { // eating DIM scraps FEEDS it -> grows bigger & faster -> DISASTER
+      mote.wasBurning=false;
+      mote.energy=Math.min(4,mote.energy+nibble*FEED_GROW);
+      mote.mood = mote.energy>2.2 ? 'menace' : (onTrail ? 'distracted' : 'hunting');
+      if(nibble>0.03) burst(mote.x,mote.y,1,285,55,0.5); // dark gulp (visual only — no spam sound)
+    }
+    const ef=Math.floor(mote.energy);        // AUDIO: sting only when it crosses a size threshold
+    if(ef>(mote.ef||0)) sfx('grow'); mote.ef=ef;
+    const mvx=tx-mote.x,mvy=ty-mote.y,md=Math.hypot(mvx,mvy)||1;
+    const px=mote.x,py=mote.y;
+    mote.x+=mvx/md*sp*dt; mote.y+=mvy/md*sp*dt;
+    mote.vx=mote.x-px; mote.vy=mote.y-py;                   // FEEL: velocity for squash & stretch / afterimages
+    mote.energy=Math.max(0,mote.energy-dt*0.25); // slow natural decay
+    if(Math.hypot(mote.x-player.x,mote.y-player.y)<24){player.life-=MOTE_DRAIN*dt;player.flash=Math.min(1,player.flash+dt*3);mote.mood='hunting';
+      sfx('hit',120); shake=Math.max(shake,5);}                                  // it's on you
+  }
+
+  for(let i=fx.length-1;i>=0;i--){fx[i].t-=dt; if(fx[i].t<=0)fx.splice(i,1);}
+  if(player.life<=0){player.life=0;dead=true;best=Math.max(best,tSurv);}
+}
+
+// 3) CLOSE THE LOOP — catch what's inside
+function closeLoop(poly){
+  if(poly.length<LOOP_MIN)return;
+  fx.push({poly,t:0.6,t0:0.6});
+  // mote inside? stun + fling out
+  if(mote.stun<=0 && pip({x:mote.x,y:mote.y},poly)){
+    burst(mote.x,mote.y,30,190,300,0.55); burst(mote.x,mote.y,10,50,180,0.6); // sparks
+    sfx('trap'); freeze=Math.max(freeze,0.09); shake=Math.max(shake,13);       // hit-stop + kick
+    mote.stun=1.6; mote.energy=0; caps++; player.flash=1;
+    const ex=mote.x<W/2?-50:W+50, ey=Math.random()*H; mote.x=ex; mote.y=ey;
+  } else { sfx('trap',300); freeze=Math.max(freeze,0.05); shake=Math.max(shake,7); } // empty loop still thumps
+  // orb inside? harvest it
+  if(pip({x:orb.x,y:orb.y},poly)){player.life=Math.min(MAX_LIFE,player.life+ORB_VALUE);orbs++;orb=spawnOrb();}
+  // spend the enclosed trail (drink a chunk back)
+  let gain=0; for(let i=trail.length-1;i>=0;i--){if(pip(trail[i],poly)){gain+=trail[i].v*0.5;trail.splice(i,1);}}
+  player.life=Math.min(MAX_LIFE,player.life+gain);
+}
+
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle='#0b0c0f'; ctx.fillRect(0,0,W,H);
+  const lf=Math.max(0,player.life/MAX_LIFE);
+  ctx.save(); // screen-shake affects the world, not the HUD/overlays
+  if(shake>0)ctx.translate((Math.random()*2-1)*shake,(Math.random()*2-1)*shake);
+  // loop-ignite flashes
+  for(const f of fx){const k=f.t/f.t0;ctx.beginPath();ctx.moveTo(f.poly[0].x,f.poly[0].y);
+    for(const p of f.poly)ctx.lineTo(p.x,p.y);ctx.closePath();
+    ctx.fillStyle=`hsla(${HUE},100%,70%,${0.28*k})`;ctx.fill();
+    ctx.strokeStyle=`hsla(${HUE},100%,80%,${0.9*k})`;ctx.lineWidth=3;ctx.stroke();}
+  // trail (additive glow — density = brightness = heat)
+  ctx.globalCompositeOperation='lighter';
+  for(const p of trail){const a=Math.min(1,p.v/8);ctx.beginPath();
+    ctx.fillStyle=`hsla(${HUE},100%,${45+a*30}%,${0.10+a*0.6})`;
+    ctx.shadowBlur=10*a;ctx.shadowColor=`hsl(${HUE},100%,60%)`;ctx.arc(p.x,p.y,3.5+a*4.5,0,7);ctx.fill();}
+  ctx.beginPath();ctx.fillStyle=`hsl(${ORB_HUE},100%,62%)`;
+  ctx.shadowBlur=26;ctx.shadowColor=`hsl(${ORB_HUE},100%,60%)`;ctx.arc(orb.x,orb.y,orb.r,0,7);ctx.fill();
+  ctx.globalCompositeOperation='source-over';ctx.shadowBlur=0;
+  if(!dead){const r=13+lf*7,glow=10+lf*34+player.flash*30;ctx.globalCompositeOperation='lighter';
+    ctx.beginPath();ctx.fillStyle=`hsl(${HUE},100%,${40+lf*35}%)`;
+    ctx.shadowBlur=glow;ctx.shadowColor=`hsl(${HUE},100%,65%)`;ctx.arc(player.x,player.y,r,0,7);ctx.fill();
+    if(player.flash>0){ctx.beginPath();ctx.fillStyle=`hsla(${HUE},100%,92%,${player.flash})`;ctx.arc(player.x,player.y,r*0.6,0,7);ctx.fill();}
+    ctx.globalCompositeOperation='source-over';ctx.shadowBlur=0;}
+  // ===== MOTE (feel: squash & stretch, watching eye, afterimages, recoil) =====
+  {
+  const mood=mote.mood||'hunting', baseR=12+mote.energy*3.5;
+  const spd=Math.hypot(mote.vx||0,mote.vy||0), ang=Math.atan2(mote.vy||0,(mote.vx||0.0001));
+  let stretch=Math.min(0.55, spd*0.02 + (mood==='menace'?0.14:0)); if(mood==='caught')stretch=0;
+  const breathe=1+0.05*Math.sin(tSurv*(mood==='caught'?3:(mote.lockPlayer?11:6)));
+  let jx=0,jy=0; if(mood==='hurt'){jx=(Math.random()*2-1)*4;jy=(Math.random()*2-1)*4;} // recoil jitter
+  const mx=mote.x+jx, my=mote.y+jy;
+  // motion afterimages (fast / fed monster)
+  if(spd>3.2||mood==='menace'){ctx.globalCompositeOperation='lighter';const ah=mood==='menace'?26:340;
+    for(let k=1;k<=2;k++){ctx.beginPath();ctx.fillStyle=`hsla(${ah},90%,50%,${0.10/k})`;
+      ctx.arc(mx-(mote.vx||0)*k*1.6,my-(mote.vy||0)*k*1.6,baseR*(1-0.12*k),0,7);ctx.fill();}
+    ctx.globalCompositeOperation='source-over';}
+  // body, squashed & stretched along travel
+  ctx.save();ctx.translate(mx,my);ctx.rotate(ang);ctx.scale((1+stretch)*breathe,(1-stretch*0.55)*breathe);
+  ctx.fillStyle=mood==='menace'?'#050505':(mood==='caught'?'#20242c':'#080709');
+  ctx.beginPath();ctx.arc(0,0,baseR,0,7);ctx.fill();ctx.restore();
+  // mood ring
+  const rH={caught:210,hurt:190,menace:26,distracted:205,hunting:340}[mood];
+  const rS={caught:8,hurt:90,menace:95,distracted:40,hunting:85}[mood];
+  const pA={caught:0.05,hurt:0.5,menace:0.4,distracted:0.12,hunting:0.28}[mood];
+  const pS={caught:2,hurt:24,menace:14,distracted:5,hunting:10}[mood];
+  const rl=(mood==='caught'||mood==='hurt')?58:(mood==='menace'?60:64);
+  ctx.lineWidth=mood==='menace'?3:2;
+  ctx.strokeStyle=`hsla(${rH},${rS}%,${rl}%,${0.45+pA*Math.sin(tSurv*pS)})`;
+  ctx.shadowBlur=mood==='menace'?18:(mood==='hurt'?14:0);ctx.shadowColor=`hsl(${rH},${rS}%,55%)`;
+  ctx.beginPath();ctx.arc(mx,my,baseR+3+(mood==='menace'?2:0),0,7);ctx.stroke();ctx.shadowBlur=0;
+  if(mood==='menace'){ctx.strokeStyle=`hsla(30,100%,60%,${0.3+0.2*Math.sin(tSurv*20)})`;
+    ctx.beginPath();ctx.arc(mx,my,baseR+8,0,7);ctx.stroke();}
+  // THE EYE — it looks at what it hunts; locked on YOU = big glowing pupil = dread
+  if(mood==='caught'){ ctx.strokeStyle='#8899aa';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(mx-5,my-5);ctx.lineTo(mx+5,my+5);ctx.moveTo(mx+5,my-5);ctx.lineTo(mx-5,my+5);ctx.stroke();
+  } else {
+    const eDir=Math.atan2((mote.ty||my)-my,(mote.tx||mx)-mx), dil=mote.lockPlayer?1:0.62, pr=baseR*0.42*dil;
+    const ex=mx+Math.cos(eDir)*baseR*0.26, ey=my+Math.sin(eDir)*baseR*0.26;
+    const ec=mood==='hurt'?'#a9ecff':(mood==='menace'?'#ff7a2a':(mood==='distracted'?'#9fb4d8':'#ff4d6d'));
+    ctx.beginPath();ctx.fillStyle=ec;ctx.shadowBlur=10*dil;ctx.shadowColor=ec;ctx.arc(ex,ey,pr,0,7);ctx.fill();ctx.shadowBlur=0;
+    ctx.beginPath();ctx.fillStyle='rgba(255,255,255,.85)';ctx.arc(ex-pr*0.3,ey-pr*0.3,pr*0.28,0,7);ctx.fill();
+  }
+  }
+  drawParts();
+  ctx.restore(); // end screen-shake transform
+  ctx.fillStyle=`rgba(4,4,7,${(1-lf)*0.72})`;ctx.fillRect(0,0,W,H);
+  if(dead){ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);ctx.textAlign='center';
+    ctx.fillStyle='#cfe6ff';ctx.font='600 34px ui-monospace,monospace';ctx.fillText('you faded',W/2,H/2-26);
+    ctx.font='15px ui-monospace,monospace';ctx.fillStyle='#7f93a8';
+    ctx.fillText(`survived ${tSurv.toFixed(1)}s  ·  orbs ${orbs}  ·  loops ${caps}  ·  best ${best.toFixed(1)}s`,W/2,H/2+8);
+    ctx.fillStyle='#9fd8ff';ctx.fillText('press SPACE / tap to try again',W/2,H/2+40);}
+  hud.innerHTML=dead?'':`life <b>${Math.ceil(player.life)}</b> · <b>${tSurv.toFixed(1)}s</b> · orbs <b>${orbs}</b> · caught <i>${caps}</i> · mote: <i>${mote.mood||'hunting'}</i><br>`+
+    `bait it · burn it (don't feed it!) · trap it in a loop`;
+}
+</script>
+</body>
+</html>
