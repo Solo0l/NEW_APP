@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ChromaEscape — Prototype 0.3 (Mote Relationship)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0c;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;-webkit-tap-highlight-color:transparent;}
+  #c{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;}
+  #hud{position:fixed;top:10px;left:12px;color:#5a6a7a;font-size:12px;letter-spacing:.05em;
+    pointer-events:none;line-height:1.6;text-shadow:0 1px 3px #000;z-index:2;}
+  #hud b{color:#9fd8ff;} #hud i{color:#ffd27f;font-style:normal;}
+  #boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#9fd8ff;font-size:15px;letter-spacing:.1em;background:#0a0a0c;z-index:3;cursor:pointer;text-align:center;line-height:2;padding:20px;}
+  #boot span{opacity:.6;font-size:12px;color:#6b7c8c;line-height:1.8;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="boot">CHROMAESCAPE · prototype 0.3 — you &amp; the mote
+<span>click / tap here, then WASD · arrows · drag to move<br><br>
+BAIT it — it chases your brightest trail, so lead it around<br>
+BURN it — fresh thick trail hurts it · dim scraps FEED it (it grows!)<br>
+TRAP it — draw a closed loop around it to catch it<br><br>
+watch its ring: pink=hunting · orange=fed monster · cyan=hurt · grey=caught</span></div>
+<script>
+/* PROTOTYPE 0.3 — the Mote relationship. No new content; the SAME three verbs,
+   tuned so the mote constantly changes character (prey/predator/friend/disaster/opportunity):
+   1) BAIT  — it hunts your brightest trail; lead it, or pull it off you / an orb.
+   2) BURN vs FEED — FRESH thick trail HURTS it (prey); DIM scraps FEED it, so it grows
+                     bigger & faster (disaster). One act, opposite fates, by timing.
+   3) TRAP  — close a loop around it to catch it (stun + fling + reset its size).
+   Its ring colour shows its mood. Can these three relationships hold 20 minutes? */
+const cv=document.getElementById('c'), ctx=cv.getContext('2d'),
+  hud=document.getElementById('hud'), boot=document.getElementById('boot');
+let W=0,H=0; function resize(){W=cv.width=cv.clientWidth||innerWidth;H=cv.height=cv.clientHeight||innerHeight;}
+addEventListener('resize',resize); resize();
+
+const MAX_LIFE=100, START_LIFE=60, SPEED=300, MOVE_LEAK=16, ENTROPY=2.0,
+  DROP_SPACING=9, ABSORB_R=26, ABSORB_AGE=0.4, ORB_VALUE=30, ORB_R=15,
+  MOTE_SPEED=170, MOTE_DRAIN=32, HUE=190, ORB_HUE=43,
+  BURN_R=26, BURN_THRESH=3.0, BURN_SLOW=0.32, BURN_BITE=9, MOTE_HURT=1.6, FEED_GROW=2.2,
+  LOOP_MIN=12, LOOP_CLOSE_R=15, STROKE_MAX=240;
+
+let player,trail,stroke,orb,mote,fx,dead,tSurv,orbs,caps,best=0,started=false,keys={},touch=null,pend=0;
+
+function reset(){
+  player={x:W/2,y:H/2,life:START_LIFE,ldx:W/2,ldy:H/2,flash:0};
+  trail=[]; stroke=[]; pend=0; orb=spawnOrb();
+  mote={x:Math.random()<.5?-40:W+40,y:Math.random()*H,energy:0,stun:0}; fx=[];
+  dead=false; tSurv=0; orbs=0; caps=0;
+}
+function spawnOrb(){let x,y,t=0;do{x=60+Math.random()*(W-120);y=60+Math.random()*(H-120);t++;}
+  while(player&&Math.hypot(x-player.x,y-player.y)<200&&t<20);return{x,y,r:0,t:0};}
+function begin(){if(!started){started=true;boot.style.display='none';reset();}cv.focus&&cv.focus();}
+boot.addEventListener('pointerdown',begin);
+addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true; if(!started){begin();return;} if(dead&&(e.key===' '||e.key==='enter'))reset();});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+cv.addEventListener('pointerdown',e=>{if(!started){begin();return;}if(dead){reset();return;}touch={x:e.clientX,y:e.clientY};});
+cv.addEventListener('pointermove',e=>{if(touch)touch={x:e.clientX,y:e.clientY};});
+cv.addEventListener('pointerup',()=>{touch=null;});
+
+// segment-intersection + point-in-polygon for loop closing
+function segInt(a,b,c,d){const r=(p,q,s)=>(q.x-p.x)*(s.y-p.y)-(q.y-p.y)*(s.x-p.x);
+  const d1=r(c,d,a),d2=r(c,d,b),d3=r(a,b,c),d4=r(a,b,d);
+  return ((d1>0)!=(d2>0))&&((d3>0)!=(d4>0));}
+function pip(pt,poly){let n=poly.length,inside=false;
+  for(let i=0,j=n-1;i<n;j=i++){const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>pt.y)!=(yj>pt.y))&&(pt.x<(xj-xi)*(pt.y-yi)/(yj-yi)+xi))inside=!inside;}return inside;}
+
+let last=performance.now();
+function frame(now){let dt=Math.min(0.033,(now-last)/1000);last=now;
+  if(started&&!dead)step(dt); if(started)draw(); requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+
+function step(dt){
+  tSurv+=dt;
+  let dx=0,dy=0;
+  if(keys['w']||keys['arrowup'])dy-=1; if(keys['s']||keys['arrowdown'])dy+=1;
+  if(keys['a']||keys['arrowleft'])dx-=1; if(keys['d']||keys['arrowright'])dx+=1;
+  if(touch){const vx=touch.x-player.x,vy=touch.y-player.y,d=Math.hypot(vx,vy);if(d>6){dx=vx/d;dy=vy/d;}}
+  const mag=Math.hypot(dx,dy),moving=mag>0.01;
+  if(moving){dx/=mag;dy/=mag;
+    player.x=Math.max(0,Math.min(W,player.x+dx*SPEED*dt));
+    player.y=Math.max(0,Math.min(H,player.y+dy*SPEED*dt));}
+
+  // 1) LEAK — drop trail + build the current stroke; detect a closed LOOP
+  if(moving&&player.life>0){
+    pend+=MOVE_LEAK*dt; player.life-=MOVE_LEAK*dt;
+    const dd=Math.hypot(player.x-player.ldx,player.y-player.ldy);
+    if(dd>=DROP_SPACING){
+      const np={x:player.x,y:player.y};
+      trail.push({x:np.x,y:np.y,v:pend,age:0}); pend=0;
+      if(trail.length>1400)trail.shift();
+      // loop test against earlier stroke points
+      let hit=-1;
+      if(stroke.length>LOOP_MIN){
+        const a=stroke[stroke.length-1],b=np;
+        for(let j=0;j<stroke.length-LOOP_MIN;j++){
+          if(Math.hypot(np.x-stroke[j].x,np.y-stroke[j].y)<LOOP_CLOSE_R){hit=j;break;}
+          if(j>0&&segInt(a,b,stroke[j-1],stroke[j])){hit=j;break;}
+        }
+      }
+      stroke.push(np); if(stroke.length>STROKE_MAX)stroke.shift();
+      if(hit>=0){ closeLoop(stroke.slice(hit)); stroke=[]; }
+      player.ldx=player.x; player.ldy=player.y;
+    }
+    player.idleT=0;
+  } else { // brief pauses (keyboard corners) are OK; a long stop ends the gesture
+    player.idleT=(player.idleT||0)+dt; if(player.idleT>0.28){stroke.length=0;pend=0;}
+  }
+
+  player.life-=ENTROPY*dt;
+
+  // trail fade + DRINK (reabsorb)
+  for(let i=trail.length-1;i>=0;i--){const p=trail[i];p.age+=dt;p.v*=Math.exp(-dt/2.6);
+    if(p.v<0.05){trail.splice(i,1);continue;}
+    if(p.age>ABSORB_AGE&&Math.hypot(p.x-player.x,p.y-player.y)<ABSORB_R){
+      player.life=Math.min(MAX_LIFE,player.life+p.v);trail.splice(i,1);}}
+
+  // orb harvest
+  orb.t+=dt; orb.r=ORB_R*(0.75+0.25*Math.sin(orb.t*4));
+  if(Math.hypot(orb.x-player.x,orb.y-player.y)<ORB_R+12){
+    player.life=Math.min(MAX_LIFE,player.life+ORB_VALUE);player.flash=1;orbs++;orb=spawnOrb();}
+  if(player.flash>0)player.flash=Math.max(0,player.flash-dt*2.5);
+
+  // MOTE — the three relationships live here. It hunts the brightest thing;
+  // FRESH/thick trail BURNS it (prey), DIM scraps FEED it (disaster), YOU are the target of last resort (predator).
+  if(mote.stun>0){ mote.stun-=dt; mote.mood='caught'; }
+  else {
+    // pick the brightest target: you, or a bright trail crumb (this is what BAIT exploits)
+    let tx=player.x,ty=player.y,tS=player.life/(1+Math.hypot(player.x-mote.x,player.y-mote.y)*0.02),onTrail=false;
+    for(const p of trail){const s=p.v/(1+Math.hypot(p.x-mote.x,p.y-mote.y)*0.02);
+      if(s>tS){tS=s;tx=p.x;ty=p.y;onTrail=true;}}
+    // local heat around the mote, and how much it's nibbling
+    let heat=0,nibble=0; for(const p of trail){const d=Math.hypot(p.x-mote.x,p.y-mote.y);
+      if(d<BURN_R){heat+=p.v; const bite=BURN_BITE*dt*(1-d/BURN_R); if(p.v>0.05){p.v-=bite;nibble+=bite;}}}
+    let sp=MOTE_SPEED+mote.energy*24;
+    if(heat>BURN_THRESH){ // FRESH wall: it recoils, slows, and is HURT (shrinks) -> PREY
+      sp*=BURN_SLOW; mote.energy=Math.max(0,mote.energy-dt*MOTE_HURT); mote.mood='hurt';
+    } else { // eating DIM scraps FEEDS it -> grows bigger & faster -> DISASTER
+      mote.energy=Math.min(4,mote.energy+nibble*FEED_GROW);
+      mote.mood = mote.energy>2.2 ? 'menace' : (onTrail ? 'distracted' : 'hunting');
+    }
+    const mvx=tx-mote.x,mvy=ty-mote.y,md=Math.hypot(mvx,mvy)||1;
+    mote.x+=mvx/md*sp*dt; mote.y+=mvy/md*sp*dt;
+    mote.energy=Math.max(0,mote.energy-dt*0.25); // slow natural decay
+    if(Math.hypot(mote.x-player.x,mote.y-player.y)<24){player.life-=MOTE_DRAIN*dt;player.flash=Math.min(1,player.flash+dt*3);mote.mood='hunting';}
+  }
+
+  for(let i=fx.length-1;i>=0;i--){fx[i].t-=dt; if(fx[i].t<=0)fx.splice(i,1);}
+  if(player.life<=0){player.life=0;dead=true;best=Math.max(best,tSurv);}
+}
+
+// 3) CLOSE THE LOOP — catch what's inside
+function closeLoop(poly){
+  if(poly.length<LOOP_MIN)return;
+  fx.push({poly,t:0.6,t0:0.6});
+  // mote inside? stun + fling out
+  if(mote.stun<=0 && pip({x:mote.x,y:mote.y},poly)){
+    mote.stun=1.6; mote.energy=0; caps++; player.flash=1;
+    const ex=mote.x<W/2?-50:W+50, ey=Math.random()*H; mote.x=ex; mote.y=ey;
+  }
+  // orb inside? harvest it
+  if(pip({x:orb.x,y:orb.y},poly)){player.life=Math.min(MAX_LIFE,player.life+ORB_VALUE);orbs++;orb=spawnOrb();}
+  // spend the enclosed trail (drink a chunk back)
+  let gain=0; for(let i=trail.length-1;i>=0;i--){if(pip(trail[i],poly)){gain+=trail[i].v*0.5;trail.splice(i,1);}}
+  player.life=Math.min(MAX_LIFE,player.life+gain);
+}
+
+function draw(){
+  ctx.fillStyle='#0b0c0f'; ctx.fillRect(0,0,W,H);
+  const lf=Math.max(0,player.life/MAX_LIFE);
+  // loop-ignite flashes
+  for(const f of fx){const k=f.t/f.t0;ctx.beginPath();ctx.moveTo(f.poly[0].x,f.poly[0].y);
+    for(const p of f.poly)ctx.lineTo(p.x,p.y);ctx.closePath();
+    ctx.fillStyle=`hsla(${HUE},100%,70%,${0.28*k})`;ctx.fill();
+    ctx.strokeStyle=`hsla(${HUE},100%,80%,${0.9*k})`;ctx.lineWidth=3;ctx.stroke();}
+  // trail (additive glow — density = brightness = heat)
+  ctx.globalCompositeOperation='lighter';
+  for(const p of trail){const a=Math.min(1,p.v/8);ctx.beginPath();
+    ctx.fillStyle=`hsla(${HUE},100%,${45+a*30}%,${0.10+a*0.6})`;
+    ctx.shadowBlur=10*a;ctx.shadowColor=`hsl(${HUE},100%,60%)`;ctx.arc(p.x,p.y,3.5+a*4.5,0,7);ctx.fill();}
+  ctx.beginPath();ctx.fillStyle=`hsl(${ORB_HUE},100%,62%)`;
+  ctx.shadowBlur=26;ctx.shadowColor=`hsl(${ORB_HUE},100%,60%)`;ctx.arc(orb.x,orb.y,orb.r,0,7);ctx.fill();
+  ctx.globalCompositeOperation='source-over';ctx.shadowBlur=0;
+  if(!dead){const r=13+lf*7,glow=10+lf*34+player.flash*30;ctx.globalCompositeOperation='lighter';
+    ctx.beginPath();ctx.fillStyle=`hsl(${HUE},100%,${40+lf*35}%)`;
+    ctx.shadowBlur=glow;ctx.shadowColor=`hsl(${HUE},100%,65%)`;ctx.arc(player.x,player.y,r,0,7);ctx.fill();
+    if(player.flash>0){ctx.beginPath();ctx.fillStyle=`hsla(${HUE},100%,92%,${player.flash})`;ctx.arc(player.x,player.y,r*0.6,0,7);ctx.fill();}
+    ctx.globalCompositeOperation='source-over';ctx.shadowBlur=0;}
+  // mote — its MOOD reads at a glance (ring hue/pulse/size), not a new mechanic, just feedback
+  const mr=12+mote.energy*3.5, mood=mote.mood||'hunting';
+  // ring hue by mood: caught=grey, hurt=cyan(recoiling), menace=hot orange, distracted=cool blue, hunting=red-pink
+  const ringHue={caught:210,hurt:190,menace:26,distracted:205,hunting:340}[mood];
+  const ringSat={caught:8,hurt:90,menace:95,distracted:40,hunting:85}[mood];
+  const pulseAmp={caught:0.05,hurt:0.45,menace:0.4,distracted:0.12,hunting:0.28}[mood];
+  const pulseSpd={caught:2,hurt:22,menace:14,distracted:5,hunting:10}[mood];
+  const rl=(mood==='caught'||mood==='hurt')?58:(mood==='menace'?60:64);
+  ctx.beginPath();ctx.fillStyle=mood==='menace'?'#050505':(mood==='caught'?'#20242c':'#080709');
+  ctx.arc(mote.x,mote.y,mr,0,7);ctx.fill();
+  ctx.lineWidth=mood==='menace'?3:2;
+  ctx.strokeStyle=`hsla(${ringHue},${ringSat}%,${rl}%,${0.45+pulseAmp*Math.sin(tSurv*pulseSpd)})`;
+  ctx.shadowBlur=mood==='menace'?18:(mood==='hurt'?14:0);ctx.shadowColor=`hsl(${ringHue},${ringSat}%,55%)`;
+  ctx.beginPath();ctx.arc(mote.x,mote.y,mr+3+ (mood==='menace'?2:0),0,7);ctx.stroke();ctx.shadowBlur=0;
+  if(mood==='menace'){ // a second, angrier ring when it's a fed monster
+    ctx.strokeStyle=`hsla(30,100%,60%,${0.3+0.2*Math.sin(tSurv*20)})`;ctx.beginPath();ctx.arc(mote.x,mote.y,mr+8,0,7);ctx.stroke();}
+  ctx.fillStyle=`rgba(4,4,7,${(1-lf)*0.72})`;ctx.fillRect(0,0,W,H);
+  if(dead){ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);ctx.textAlign='center';
+    ctx.fillStyle='#cfe6ff';ctx.font='600 34px ui-monospace,monospace';ctx.fillText('you faded',W/2,H/2-26);
+    ctx.font='15px ui-monospace,monospace';ctx.fillStyle='#7f93a8';
+    ctx.fillText(`survived ${tSurv.toFixed(1)}s  ·  orbs ${orbs}  ·  loops ${caps}  ·  best ${best.toFixed(1)}s`,W/2,H/2+8);
+    ctx.fillStyle='#9fd8ff';ctx.fillText('press SPACE / tap to try again',W/2,H/2+40);}
+  hud.innerHTML=dead?'':`life <b>${Math.ceil(player.life)}</b> · <b>${tSurv.toFixed(1)}s</b> · orbs <b>${orbs}</b> · caught <i>${caps}</i> · mote: <i>${mote.mood||'hunting'}</i><br>`+
+    `bait it · burn it (don't feed it!) · trap it in a loop`;
+}
+</script>
+</body>
+</html>
