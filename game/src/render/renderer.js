@@ -64,6 +64,12 @@ export function makeRenderer(ctx, size, hud) {
       ctx.lineWidth = 2; ctx.strokeStyle = `hsla(${rHue},${caught ? 10 : 85}%,60%,${0.5 + 0.25 * Math.sin(tSurv * (caught ? 2 : 10))})`;
       ctx.shadowBlur = caps > 4 && !caught ? 14 : 0; ctx.shadowColor = `hsl(${rHue},85%,55%)`;
       ctx.beginPath(); ctx.arc(m.x, m.y, baseR + 3, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+      if (!caught && m.snareT > 0) { // SNARED — controlled by your trail; your window to loop it
+        ctx.strokeStyle = `hsla(190,100%,78%,${0.55 + 0.4 * Math.sin(tSurv * 18)})`; ctx.lineWidth = 3;
+        ctx.shadowBlur = 12; ctx.shadowColor = 'hsl(190,100%,60%)';
+        ctx.beginPath(); ctx.arc(m.x, m.y, baseR + 8, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+        for (let a = 0; a < 4; a++) { const ang = a * Math.PI / 2 + tSurv * 2; ctx.beginPath(); ctx.moveTo(m.x + Math.cos(ang) * (baseR + 4), m.y + Math.sin(ang) * (baseR + 4)); ctx.lineTo(m.x + Math.cos(ang) * (baseR + 13), m.y + Math.sin(ang) * (baseR + 13)); ctx.stroke(); }
+      }
       if (caught) {
         ctx.strokeStyle = '#8899aa'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(m.x - 5, m.y - 5); ctx.lineTo(m.x + 5, m.y + 5); ctx.moveTo(m.x + 5, m.y - 5); ctx.lineTo(m.x - 5, m.y + 5); ctx.stroke();

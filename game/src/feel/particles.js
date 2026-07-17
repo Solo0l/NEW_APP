@@ -10,6 +10,7 @@ export function makeParticles(bus) {
   }
   bus.on('caught', (e) => { burst(e.x, e.y, 34, 190, 320, 0.6); burst(e.x, e.y, 12, 45, 180, 0.6); });
   bus.on('escape', (e) => { burst(e.x, e.y, 9, 190, 150, 0.45); });
+  bus.on('snare', (e) => { burst(e.x, e.y, 10, 190, 90, 0.35); });
   return {
     parts, burst,
     update(dt) { for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.9; p.vy *= 0.9; p.life -= dt; if (p.life <= 0) parts.splice(i, 1); } },

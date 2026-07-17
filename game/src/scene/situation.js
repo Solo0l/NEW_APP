@@ -54,6 +54,13 @@ export function makeSituationScene(sit, bus, arena, input, opts = {}) {
     }
     trap.update(dt);
     mote.update(dt, { player, trap, caps });
+    // COMBAT (Amendment 01): fresh trail SNARES the enemy — an opportunity, never a kill.
+    // The Trap remains the only execution.
+    const m = mote.state;
+    if (m.stun <= 0 && m.snareT <= 0 && m.snareCd <= 0 && trap.freshContact(m.x, m.y, CFG.SNARE_R, CFG.TRAIL_FRESH)) {
+      m.snareT = CFG.SNARE_DUR; m.snareCd = CFG.SNARE_DUR + CFG.SNARE_IMMUNE;
+      bus.emit('snare', { x: m.x, y: m.y });
+    }
     for (let i = fx.length - 1; i >= 0; i--) { fx[i].t -= dt; if (fx[i].t <= 0) fx.splice(i, 1); }
     for (let i = fxT.length - 1; i >= 0; i--) { fxT[i].t -= dt; fxT[i].y -= 20 * dt; if (fxT[i].t <= 0) fxT.splice(i, 1); }
     if (goal && caps >= goal) { won = true; winT = 0.7; }

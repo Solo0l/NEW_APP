@@ -10,6 +10,7 @@ export function makeMote(mc, bus, arena) {
     phase: 'rest', phaseT: 0, squash: 1,
     feint: false, leanAng: 0,
     trap: 0, trapTarget: 0, wasHigh: false, freeWiggle: 0,
+    snareT: 0, snareCd: 0, // Amendment 01: controlled (rooted) by fresh trail — an opportunity, not damage
   };
 
   const radius = (caps) => mc.rBase + Math.min(caps, 12) * mc.rGrow;
@@ -20,11 +21,14 @@ export function makeMote(mc, bus, arena) {
     s.x = p.x; s.y = p.y; s.vx = 0; s.vy = 0; s.stun = 0;
     s.phase = 'rest'; s.phaseT = 0; s.squash = 1; s.feint = false; s.leanAng = 0;
     s.trap = 0; s.trapTarget = 0; s.wasHigh = false; s.freeWiggle = 0; s.fledT = 0;
+    s.snareT = 0; s.snareCd = 0;
     bus.emit('spawn', { x: s.x, y: s.y });
   }
 
   function update(dt, world) {
     const { player, trap, caps } = world;
+    if (s.snareT > 0) s.snareT -= dt;   // control timers count down regardless
+    if (s.snareCd > 0) s.snareCd -= dt;
 
     if (s.stun > 0) { s.stun -= dt; s.fleeing = false; s.trapTarget = 0; }
     else {
@@ -53,6 +57,7 @@ export function makeMote(mc, bus, arena) {
       if (s.phase === 'burst') sp = (mc.burstSpeed + caps * 22) * (fleeing ? 1.12 : 1);
       else if (s.phase === 'coil') sp = 0;
       else sp = mc.restCreep;
+      if (s.snareT > 0) sp *= CFG.SNARE_SLOW; // snared = near-rooted (the trap window)
       s.squash = s.phase === 'coil' ? 0.66 : 1;
       const mvx = tx - s.x, mvy = ty - s.y, md = Math.hypot(mvx, mvy) || 1;
       const px = s.x, py = s.y;

@@ -34,6 +34,7 @@ export function makeAudio(bus) {
   function sfxCoil() { if (on) env('triangle', 320, 560, 0.05, 0.12); }
   function squeak(p) { if (!on) return; const now = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(); o.type = 'sawtooth'; o.connect(g); g.connect(master); const f = 680 + p * 880; o.frequency.setValueAtTime(f, now); o.frequency.linearRampToValueAtTime(f * 1.14, now + 0.05); o.frequency.linearRampToValueAtTime(f * 0.9, now + 0.1); g.gain.setValueAtTime(0.045 + p * 0.05, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.11); o.start(now); o.stop(now + 0.12); }
   function gasp() { if (on) env('sine', 920, 280, 0.12, 0.26); }
+  function snareTone() { if (on) env('triangle', 220, 380, 0.10, 0.09); } // soft snap — enemy rooted
   function heartbeat(vol) {
     if (!on) return; const now = AC.currentTime;
     const mk = (at, f, v) => { const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(f, at); o.frequency.exponentialRampToValueAtTime(f * 0.6, at + 0.12); g.gain.setValueAtTime(v, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.15); o.connect(g); g.connect(master); o.start(at); o.stop(at + 0.17); };
@@ -45,6 +46,7 @@ export function makeAudio(bus) {
   bus.on('caught', (e) => trapTone(e.streak));
   bus.on('emptyLoop', () => trapTone(0));
   bus.on('escape', () => gasp());
+  bus.on('snare', () => snareTone());
   bus.on('threat', (e) => { threat = e.level; });
   bus.on('panic', (e) => { panicLvl = e.level; });
 

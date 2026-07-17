@@ -43,6 +43,13 @@ const CFG = {
   ENC_BINS: 16,        // angular bins for encirclement
   DANGER: 205,         // heartbeat danger radius
   IDLE_BREAK: 0.28,    // s of no-move before the stroke resets
+
+  // --- Amendment 01: the trail CONTROLS (creates opportunities); it never kills. ---
+  TRAIL_FRESH: 0.5,    // s — only trail this fresh can snare an enemy
+  SNARE_R: 24,         // px contact radius for a fresh-trail snare
+  SNARE_DUR: 0.9,      // s the enemy is snared (the window to loop it)
+  SNARE_IMMUNE: 1.2,   // s the enemy resists re-snaring after one wears off
+  SNARE_SLOW: 0.14,    // movement multiplier while snared (near-rooted)
 };
 
 
@@ -201,6 +208,12 @@ function makeTrap() {
     get trail() { return trail; },
     reset() { stroke = []; trail = []; },
     breakStroke() { stroke.length = 0; },
+    // is (x,y) touching FRESH trail (age <= maxAge, within r)? drives the snare (control, not damage)
+    freshContact(x, y, r, maxAge) {
+      const r2 = r * r;
+      for (const p of trail) { if (p.age <= maxAge) { const dx = p.x - x, dy = p.y - y; if (dx * dx + dy * dy < r2) return true; } }
+      return false;
+    },
     update(dt) {
       for (let i = trail.length - 1; i >= 0; i--) { trail[i].age += dt; if (trail[i].age > CFG.TRAIL_LIFE) trail.splice(i, 1); }
     },
@@ -263,6 +276,7 @@ function makeMote(mc, bus, arena) {
     phase: 'rest', phaseT: 0, squash: 1,
     feint: false, leanAng: 0,
     trap: 0, trapTarget: 0, wasHigh: false, freeWiggle: 0,
+    snareT: 0, snareCd: 0, // Amendment 01: controlled (rooted) by fresh trail — an opportunity, not damage
   };
 
   const radius = (caps) => mc.rBase + Math.min(caps, 12) * mc.rGrow;
@@ -273,11 +287,14 @@ function makeMote(mc, bus, arena) {
     s.x = p.x; s.y = p.y; s.vx = 0; s.vy = 0; s.stun = 0;
     s.phase = 'rest'; s.phaseT = 0; s.squash = 1; s.feint = false; s.leanAng = 0;
     s.trap = 0; s.trapTarget = 0; s.wasHigh = false; s.freeWiggle = 0; s.fledT = 0;
+    s.snareT = 0; s.snareCd = 0;
     bus.emit('spawn', { x: s.x, y: s.y });
   }
 
   function update(dt, world) {
     const { player, trap, caps } = world;
+    if (s.snareT > 0) s.snareT -= dt;   // control timers count down regardless
+    if (s.snareCd > 0) s.snareCd -= dt;
 
     if (s.stun > 0) { s.stun -= dt; s.fleeing = false; s.trapTarget = 0; }
     else {
@@ -306,6 +323,7 @@ function makeMote(mc, bus, arena) {
       if (s.phase === 'burst') sp = (mc.burstSpeed + caps * 22) * (fleeing ? 1.12 : 1);
       else if (s.phase === 'coil') sp = 0;
       else sp = mc.restCreep;
+      if (s.snareT > 0) sp *= CFG.SNARE_SLOW; // snared = near-rooted (the trap window)
       s.squash = s.phase === 'coil' ? 0.66 : 1;
       const mvx = tx - s.x, mvy = ty - s.y, md = Math.hypot(mvx, mvy) || 1;
       const px = s.x, py = s.y;
@@ -363,6 +381,7 @@ function makeParticles(bus) {
   }
   bus.on('caught', (e) => { burst(e.x, e.y, 34, 190, 320, 0.6); burst(e.x, e.y, 12, 45, 180, 0.6); });
   bus.on('escape', (e) => { burst(e.x, e.y, 9, 190, 150, 0.45); });
+  bus.on('snare', (e) => { burst(e.x, e.y, 10, 190, 90, 0.35); });
   return {
     parts, burst,
     update(dt) { for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.9; p.vy *= 0.9; p.life -= dt; if (p.life <= 0) parts.splice(i, 1); } },
@@ -416,6 +435,7 @@ function makeAudio(bus) {
   function sfxCoil() { if (on) env('triangle', 320, 560, 0.05, 0.12); }
   function squeak(p) { if (!on) return; const now = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(); o.type = 'sawtooth'; o.connect(g); g.connect(master); const f = 680 + p * 880; o.frequency.setValueAtTime(f, now); o.frequency.linearRampToValueAtTime(f * 1.14, now + 0.05); o.frequency.linearRampToValueAtTime(f * 0.9, now + 0.1); g.gain.setValueAtTime(0.045 + p * 0.05, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.11); o.start(now); o.stop(now + 0.12); }
   function gasp() { if (on) env('sine', 920, 280, 0.12, 0.26); }
+  function snareTone() { if (on) env('triangle', 220, 380, 0.10, 0.09); } // soft snap — enemy rooted
   function heartbeat(vol) {
     if (!on) return; const now = AC.currentTime;
     const mk = (at, f, v) => { const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(f, at); o.frequency.exponentialRampToValueAtTime(f * 0.6, at + 0.12); g.gain.setValueAtTime(v, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.15); o.connect(g); g.connect(master); o.start(at); o.stop(at + 0.17); };
@@ -427,6 +447,7 @@ function makeAudio(bus) {
   bus.on('caught', (e) => trapTone(e.streak));
   bus.on('emptyLoop', () => trapTone(0));
   bus.on('escape', () => gasp());
+  bus.on('snare', () => snareTone());
   bus.on('threat', (e) => { threat = e.level; });
   bus.on('panic', (e) => { panicLvl = e.level; });
 
@@ -507,6 +528,12 @@ function makeRenderer(ctx, size, hud) {
       ctx.lineWidth = 2; ctx.strokeStyle = `hsla(${rHue},${caught ? 10 : 85}%,60%,${0.5 + 0.25 * Math.sin(tSurv * (caught ? 2 : 10))})`;
       ctx.shadowBlur = caps > 4 && !caught ? 14 : 0; ctx.shadowColor = `hsl(${rHue},85%,55%)`;
       ctx.beginPath(); ctx.arc(m.x, m.y, baseR + 3, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+      if (!caught && m.snareT > 0) { // SNARED — controlled by your trail; your window to loop it
+        ctx.strokeStyle = `hsla(190,100%,78%,${0.55 + 0.4 * Math.sin(tSurv * 18)})`; ctx.lineWidth = 3;
+        ctx.shadowBlur = 12; ctx.shadowColor = 'hsl(190,100%,60%)';
+        ctx.beginPath(); ctx.arc(m.x, m.y, baseR + 8, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+        for (let a = 0; a < 4; a++) { const ang = a * Math.PI / 2 + tSurv * 2; ctx.beginPath(); ctx.moveTo(m.x + Math.cos(ang) * (baseR + 4), m.y + Math.sin(ang) * (baseR + 4)); ctx.lineTo(m.x + Math.cos(ang) * (baseR + 13), m.y + Math.sin(ang) * (baseR + 13)); ctx.stroke(); }
+      }
       if (caught) {
         ctx.strokeStyle = '#8899aa'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(m.x - 5, m.y - 5); ctx.lineTo(m.x + 5, m.y + 5); ctx.moveTo(m.x + 5, m.y - 5); ctx.lineTo(m.x - 5, m.y + 5); ctx.stroke();
@@ -641,6 +668,13 @@ function makeSituationScene(sit, bus, arena, input, opts = {}) {
     }
     trap.update(dt);
     mote.update(dt, { player, trap, caps });
+    // COMBAT (Amendment 01): fresh trail SNARES the enemy — an opportunity, never a kill.
+    // The Trap remains the only execution.
+    const m = mote.state;
+    if (m.stun <= 0 && m.snareT <= 0 && m.snareCd <= 0 && trap.freshContact(m.x, m.y, CFG.SNARE_R, CFG.TRAIL_FRESH)) {
+      m.snareT = CFG.SNARE_DUR; m.snareCd = CFG.SNARE_DUR + CFG.SNARE_IMMUNE;
+      bus.emit('snare', { x: m.x, y: m.y });
+    }
     for (let i = fx.length - 1; i >= 0; i--) { fx[i].t -= dt; if (fx[i].t <= 0) fx.splice(i, 1); }
     for (let i = fxT.length - 1; i >= 0; i--) { fxT[i].t -= dt; fxT[i].y -= 20 * dt; if (fxT[i].t <= 0) fxT.splice(i, 1); }
     if (goal && caps >= goal) { won = true; winT = 0.7; }

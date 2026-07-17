@@ -26,6 +26,12 @@ export function makeTrap() {
     get trail() { return trail; },
     reset() { stroke = []; trail = []; },
     breakStroke() { stroke.length = 0; },
+    // is (x,y) touching FRESH trail (age <= maxAge, within r)? drives the snare (control, not damage)
+    freshContact(x, y, r, maxAge) {
+      const r2 = r * r;
+      for (const p of trail) { if (p.age <= maxAge) { const dx = p.x - x, dy = p.y - y; if (dx * dx + dy * dy < r2) return true; } }
+      return false;
+    },
     update(dt) {
       for (let i = trail.length - 1; i >= 0; i--) { trail[i].age += dt; if (trail[i].age > CFG.TRAIL_LIFE) trail.splice(i, 1); }
     },
