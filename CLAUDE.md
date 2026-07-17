@@ -3,6 +3,11 @@
 **This document has higher priority than every future prompt. Never violate these rules.**
 Read it at the start of every session before proposing or building anything.
 
+**Also read `LESSONS_FROM_CHROMAESCAPE.md` at the start of every session.** It is the
+permanent game-design workflow extracted from this project — playtesting discipline,
+design red flags, and how Solo and Claude work together — and applies automatically to
+all design and development work here, not only to ChromaEscape itself.
+
 ---
 
 ## THE GAME
