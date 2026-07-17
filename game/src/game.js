@@ -7,35 +7,31 @@ import { makeCamera } from './feel/camera.js';
 import { makeParticles } from './feel/particles.js';
 import { makeAudio } from './feel/audio.js';
 import { makeRenderer } from './render/renderer.js';
-import { makeSituationScene } from './scene/situation.js';
-import { SITUATION_02 } from './data/situations.js';
+import { makeFlow } from './scene/flow.js';
 
-// Composition root. Owns nothing gameplay-specific; wires systems and runs the frame.
-// Which Situation to load is a data choice (default S02, the current prototype).
-export function makeGame(cv, hud, boot, situation = SITUATION_02) {
+// Composition root. Wires systems + feel, then runs the demo flow through a scene manager.
+export function makeGame(cv, hud, boot) {
   const { ctx, size } = makeCanvas(cv);
   const bus = makeBus();
   const camera = makeCamera(bus);
   const particles = makeParticles(bus);
   const audio = makeAudio(bus);
   const arena = makeArena(size);
-  const draw = makeRenderer(ctx, size, hud);
+  const renderer = makeRenderer(ctx, size, hud);
+  if (boot) boot.style.display = 'none'; // the menu scene is the start screen now
 
-  let started = false;
-
-  function begin() { audio.init(); if (!started) { started = true; if (boot) boot.style.display = 'none'; scene.reset(); } cv.focus && cv.focus(); }
-  function onPress() { if (!started) { begin(); return; } if (scene.isDead()) scene.restart(); }
-  function onKey(k) { if (!started) { begin(); return; } if (scene.isDead() && (k === ' ' || k === 'enter')) scene.restart(); }
-
-  const input = makeInput(cv, { press: onPress, key: onKey });
-  const scene = makeSituationScene(situation, bus, arena, input);
+  let mgr; // forward ref: input handlers dispatch to the current scene
+  const input = makeInput(cv, {
+    press: () => { audio.init(); mgr.press(); },
+    key: (k) => { audio.init(); mgr.key(k); },
+  });
+  mgr = makeFlow({ ctx, size, hud, bus, arena, input, renderer, camera, particles });
 
   makeLoop((dt) => {
-    // feel always advances; gameplay is paused during hit-stop
     camera.update(dt); particles.update(dt); audio.update(dt);
-    if (started && !scene.isDead() && camera.freeze <= 0) scene.update(dt);
-    if (started) draw(scene.view(), camera, particles);
+    if (camera.freeze <= 0) mgr.update(dt); // hit-stop pauses gameplay; menus never freeze
+    mgr.draw();
   });
 
-  return { bus, loadSituation(s) { /* future: scene swap */ } };
+  return { bus };
 }

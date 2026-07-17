@@ -4,21 +4,22 @@ import { makeTrap, pointInPoly } from '../systems/trap.js';
 import { makeMote } from '../entities/mote.js';
 
 // One generic, data-driven scene. Runs ANY SituationConfig. Adding a Situation adds NO scene code.
-// Owns run state (score, timer, death) and loop-closure CONSEQUENCES; emits feel events.
-export function makeSituationScene(sit, bus, arena, input) {
+// Owns run state (score, timer, death), loop-closure CONSEQUENCES (emits feel events), and — for the
+// demo flow — a win goal (catch N -> advance) and death-retry. Draws itself via the shared renderer.
+export function makeSituationScene(sit, bus, arena, input, opts = {}) {
   const player = makePlayer(arena);
   const trap = makeTrap();
   const mote = makeMote(sit.mote, bus, arena);
+  const goal = (sit.win && sit.win.catches) || 0;
   let caps = 0, tSurv = 0, dead = false, best = 0;
-  const fx = [];   // loop-ignite polygons
-  const fxT = [];  // floating "CAUGHT" labels
+  let won = false, winFired = false, winT = 0;
+  const fx = [], fxT = [];
 
   function reset() {
     player.reset(); trap.reset(); mote.spawn();
-    caps = 0; tSurv = 0; dead = false; fx.length = 0; fxT.length = 0;
+    caps = 0; tSurv = 0; dead = false; won = false; winFired = false; winT = 0; fx.length = 0; fxT.length = 0;
   }
 
-  // consequences of a closed loop (the "trap" resolution) — feel is emitted, never called
   function resolveLoop(poly) {
     if (poly.length < CFG.LOOP_MIN) return;
     fx.push({ poly, t: 0.6, t0: 0.6 });
@@ -36,6 +37,12 @@ export function makeSituationScene(sit, bus, arena, input) {
   }
 
   function update(dt) {
+    if (won) { // brief beat so the winning catch lands, then advance
+      winT -= dt; for (let i = fxT.length - 1; i >= 0; i--) { fxT[i].t -= dt; fxT[i].y -= 20 * dt; if (fxT[i].t <= 0) fxT.splice(i, 1); }
+      for (let i = fx.length - 1; i >= 0; i--) { fx[i].t -= dt; if (fx[i].t <= 0) fx.splice(i, 1); }
+      if (winT <= 0 && !winFired) { winFired = true; opts.onWin && opts.onWin(); }
+      return;
+    }
     tSurv += dt;
     const intent = input.moveVector(player.x, player.y);
     player.update(dt, intent);
@@ -49,15 +56,19 @@ export function makeSituationScene(sit, bus, arena, input) {
     mote.update(dt, { player, trap, caps });
     for (let i = fx.length - 1; i >= 0; i--) { fx[i].t -= dt; if (fx[i].t <= 0) fx.splice(i, 1); }
     for (let i = fxT.length - 1; i >= 0; i--) { fxT[i].t -= dt; fxT[i].y -= 20 * dt; if (fxT[i].t <= 0) fxT.splice(i, 1); }
+    if (goal && caps >= goal) { won = true; winT = 0.7; }
     if (player.life <= 0) { player.life = 0; dead = true; best = Math.max(best, caps); }
   }
 
+  const view = { player, mote, trap, fx, fxT, goal, get caps() { return caps; }, get tSurv() { return tSurv; }, get dead() { return dead; }, get best() { return best; }, get life() { return player.life; } };
+
   return {
-    reset,
-    restart: reset,
+    enter() { reset(); },
     update,
+    draw() { opts.renderer && opts.renderer(view, opts.camera, opts.particles); },
+    press() { if (dead) reset(); },
+    key(k) { if (dead && (k === ' ' || k === 'enter')) reset(); },
     isDead() { return dead; },
-    // read-only snapshot for the renderer
-    view() { return { player, mote, trap, fx, fxT, get caps() { return caps; }, get tSurv() { return tSurv; }, get dead() { return dead; }, get best() { return best; }, get life() { return player.life; } }; },
+    view() { return view; },
   };
 }

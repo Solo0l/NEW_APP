@@ -95,6 +95,6 @@ export function makeRenderer(ctx, size, hud) {
       ctx.font = '15px ui-monospace,monospace'; ctx.fillStyle = '#7f93a8'; ctx.fillText(`survived ${tSurv.toFixed(1)}s   ·   best ${view.best}`, W / 2, H / 2 + 8);
       ctx.fillStyle = '#9fd8ff'; ctx.fillText('press SPACE / tap to try again', W / 2, H / 2 + 40);
     }
-    if (hud) hud.innerHTML = dead ? '' : `caught <b>${caps}</b> · life <i>${Math.ceil(view.life)}</i><br>circle the mote to trap it`;
+    if (hud) hud.innerHTML = dead ? '' : `caught <b>${caps}</b>${view.goal ? ' / ' + view.goal : ''} · life <i>${Math.ceil(view.life)}</i><br>circle the mote to trap it`;
   };
 }

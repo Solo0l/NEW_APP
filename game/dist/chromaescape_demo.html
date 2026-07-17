@@ -538,7 +538,7 @@ function makeRenderer(ctx, size, hud) {
       ctx.font = '15px ui-monospace,monospace'; ctx.fillStyle = '#7f93a8'; ctx.fillText(`survived ${tSurv.toFixed(1)}s   ·   best ${view.best}`, W / 2, H / 2 + 8);
       ctx.fillStyle = '#9fd8ff'; ctx.fillText('press SPACE / tap to try again', W / 2, H / 2 + 40);
     }
-    if (hud) hud.innerHTML = dead ? '' : `caught <b>${caps}</b> · life <i>${Math.ceil(view.life)}</i><br>circle the mote to trap it`;
+    if (hud) hud.innerHTML = dead ? '' : `caught <b>${caps}</b>${view.goal ? ' / ' + view.goal : ''} · life <i>${Math.ceil(view.life)}</i><br>circle the mote to trap it`;
   };
 }
 
@@ -556,37 +556,57 @@ const SPRINTER_LOCOMOTION = {
   fleeEnabled: true,           // bolt for the gap when encircled
 };
 
+// Placeholder tutorial: a slow, gentle mote — teaches the trap with one easy catch, no text.
+const TUTORIAL_MOTE = { ...SPRINTER_LOCOMOTION, speed0: 90, speedPer: 0, burstSpeed: 300, drain: 10, feintChanceFlee: 0, feintChanceHunt: 0 };
+
+const TUTORIAL = {
+  id: 'TUT', name: 'Tutorial',
+  mote: TUTORIAL_MOTE,
+  win: { catches: 1 },
+};
+
 const SITUATION_01 = {
   id: 'S01', name: 'The Sprinter',
   mote: { ...SPRINTER_LOCOMOTION, feintChanceFlee: 0, feintChanceHunt: 0 }, // no feint
+  win: { catches: 3 },
 };
 
 const SITUATION_02 = {
   id: 'S02', name: 'The Feinter',
   mote: { ...SPRINTER_LOCOMOTION, feintChanceFlee: 0.45, feintChanceHunt: 0.28 }, // feint on
+  win: { catches: 3 },
 };
 
-const SITUATIONS = [SITUATION_01, SITUATION_02];
+// Placeholder final: feint on, a touch faster. Numbers only, no new mechanic.
+const FINAL = {
+  id: 'FIN', name: 'Final Challenge',
+  mote: { ...SPRINTER_LOCOMOTION, speed0: 165, burstSpeed: 560, feintChanceFlee: 0.5, feintChanceHunt: 0.32 },
+  win: { catches: 5 },
+};
+
+// The ordered playable stations between menu and complete.
+const DEMO_SITUATIONS = [TUTORIAL, SITUATION_01, SITUATION_02, FINAL];
 
 
 // ===== src/scene/situation.js =====
 
 // One generic, data-driven scene. Runs ANY SituationConfig. Adding a Situation adds NO scene code.
-// Owns run state (score, timer, death) and loop-closure CONSEQUENCES; emits feel events.
-function makeSituationScene(sit, bus, arena, input) {
+// Owns run state (score, timer, death), loop-closure CONSEQUENCES (emits feel events), and — for the
+// demo flow — a win goal (catch N -> advance) and death-retry. Draws itself via the shared renderer.
+function makeSituationScene(sit, bus, arena, input, opts = {}) {
   const player = makePlayer(arena);
   const trap = makeTrap();
   const mote = makeMote(sit.mote, bus, arena);
+  const goal = (sit.win && sit.win.catches) || 0;
   let caps = 0, tSurv = 0, dead = false, best = 0;
-  const fx = [];   // loop-ignite polygons
-  const fxT = [];  // floating "CAUGHT" labels
+  let won = false, winFired = false, winT = 0;
+  const fx = [], fxT = [];
 
   function reset() {
     player.reset(); trap.reset(); mote.spawn();
-    caps = 0; tSurv = 0; dead = false; fx.length = 0; fxT.length = 0;
+    caps = 0; tSurv = 0; dead = false; won = false; winFired = false; winT = 0; fx.length = 0; fxT.length = 0;
   }
 
-  // consequences of a closed loop (the "trap" resolution) — feel is emitted, never called
   function resolveLoop(poly) {
     if (poly.length < CFG.LOOP_MIN) return;
     fx.push({ poly, t: 0.6, t0: 0.6 });
@@ -604,6 +624,12 @@ function makeSituationScene(sit, bus, arena, input) {
   }
 
   function update(dt) {
+    if (won) { // brief beat so the winning catch lands, then advance
+      winT -= dt; for (let i = fxT.length - 1; i >= 0; i--) { fxT[i].t -= dt; fxT[i].y -= 20 * dt; if (fxT[i].t <= 0) fxT.splice(i, 1); }
+      for (let i = fx.length - 1; i >= 0; i--) { fx[i].t -= dt; if (fx[i].t <= 0) fx.splice(i, 1); }
+      if (winT <= 0 && !winFired) { winFired = true; opts.onWin && opts.onWin(); }
+      return;
+    }
     tSurv += dt;
     const intent = input.moveVector(player.x, player.y);
     player.update(dt, intent);
@@ -617,50 +643,140 @@ function makeSituationScene(sit, bus, arena, input) {
     mote.update(dt, { player, trap, caps });
     for (let i = fx.length - 1; i >= 0; i--) { fx[i].t -= dt; if (fx[i].t <= 0) fx.splice(i, 1); }
     for (let i = fxT.length - 1; i >= 0; i--) { fxT[i].t -= dt; fxT[i].y -= 20 * dt; if (fxT[i].t <= 0) fxT.splice(i, 1); }
+    if (goal && caps >= goal) { won = true; winT = 0.7; }
     if (player.life <= 0) { player.life = 0; dead = true; best = Math.max(best, caps); }
   }
 
+  const view = { player, mote, trap, fx, fxT, goal, get caps() { return caps; }, get tSurv() { return tSurv; }, get dead() { return dead; }, get best() { return best; }, get life() { return player.life; } };
+
   return {
-    reset,
-    restart: reset,
+    enter() { reset(); },
     update,
+    draw() { opts.renderer && opts.renderer(view, opts.camera, opts.particles); },
+    press() { if (dead) reset(); },
+    key(k) { if (dead && (k === ' ' || k === 'enter')) reset(); },
     isDead() { return dead; },
-    // read-only snapshot for the renderer
-    view() { return { player, mote, trap, fx, fxT, get caps() { return caps; }, get tSurv() { return tSurv; }, get dead() { return dead; }, get best() { return best; }, get life() { return player.life; } }; },
+    view() { return view; },
   };
+}
+
+
+// ===== src/scene/manager.js =====
+// Thin scene manager: holds the current scene, forwards the frame + input to it.
+// The only "glue" the demo flow needs — every scene it runs is something the player sees.
+function makeSceneManager() {
+  let cur = null;
+  return {
+    set(scene) { if (cur && cur.exit) cur.exit(); cur = scene; if (cur && cur.enter) cur.enter(); },
+    update(dt) { if (cur && cur.update) cur.update(dt); },
+    draw() { if (cur && cur.draw) cur.draw(); },
+    press() { if (cur && cur.press) cur.press(); },
+    key(k) { if (cur && cur.key) cur.key(k); },
+    get current() { return cur; },
+  };
+}
+
+
+// ===== src/scene/menu.js =====
+// Placeholder main menu. Any input begins the demo.
+function makeMenuScene(ctx, size, hud, { onStart }) {
+  let t = 0;
+  return {
+    enter() { if (hud) hud.innerHTML = ''; },
+    press() { onStart(); },
+    key() { onStart(); },
+    update(dt) { t += dt; },
+    draw() {
+      const W = size.w, H = size.h;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#0b0c0f'; ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#cfe6ff'; ctx.font = '700 46px ui-monospace,monospace';
+      ctx.fillText('CHROMAESCAPE', W / 2, H / 2 - 28);
+      ctx.fillStyle = '#5a6a7a'; ctx.font = '13px ui-monospace,monospace';
+      ctx.fillText('escape · draw · trap', W / 2, H / 2 + 6);
+      ctx.fillStyle = `hsla(190,100%,72%,${0.5 + 0.4 * Math.sin(t * 3)})`; ctx.font = '15px ui-monospace,monospace';
+      ctx.fillText('click / tap / press any key to begin', W / 2, H / 2 + 46);
+    },
+  };
+}
+
+
+// ===== src/scene/complete.js =====
+// Placeholder end screen. Any input loops back to the menu.
+function makeCompleteScene(ctx, size, hud, { onStart }) {
+  let t = 0;
+  return {
+    enter() { if (hud) hud.innerHTML = ''; },
+    press() { onStart(); },
+    key() { onStart(); },
+    update(dt) { t += dt; },
+    draw() {
+      const W = size.w, H = size.h;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#0b0c0f'; ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#cfe6ff'; ctx.font = '700 40px ui-monospace,monospace';
+      ctx.fillText('DEMO COMPLETE', W / 2, H / 2 - 20);
+      ctx.fillStyle = '#7f93a8'; ctx.font = '15px ui-monospace,monospace';
+      ctx.fillText('you became the hunter', W / 2, H / 2 + 14);
+      ctx.fillStyle = `hsla(190,100%,72%,${0.5 + 0.4 * Math.sin(t * 3)})`;
+      ctx.fillText('press / tap to return to the menu', W / 2, H / 2 + 46);
+    },
+  };
+}
+
+
+// ===== src/scene/flow.js =====
+
+// The demo spine: menu -> [situations...] -> complete -> (loop to menu).
+// Placeholder skeleton; each station is polished later. Pure sequencing, no new mechanics.
+function makeFlow(deps) {
+  const { ctx, size, hud, bus, arena, input, renderer, camera, particles } = deps;
+  const mgr = makeSceneManager();
+  const N = DEMO_SITUATIONS.length;
+  let step = -1;
+
+  function build(i) {
+    if (i === 0) return makeMenuScene(ctx, size, hud, { onStart: advance });
+    if (i <= N) return makeSituationScene(DEMO_SITUATIONS[i - 1], bus, arena, input, { onWin: advance, renderer, camera, particles });
+    return makeCompleteScene(ctx, size, hud, { onStart: restart });
+  }
+  function advance() { step++; mgr.set(build(step)); }
+  function restart() { step = -1; advance(); }
+
+  advance(); // -> menu
+  return mgr;
 }
 
 
 // ===== src/game.js =====
 
-// Composition root. Owns nothing gameplay-specific; wires systems and runs the frame.
-// Which Situation to load is a data choice (default S02, the current prototype).
-function makeGame(cv, hud, boot, situation = SITUATION_02) {
+// Composition root. Wires systems + feel, then runs the demo flow through a scene manager.
+function makeGame(cv, hud, boot) {
   const { ctx, size } = makeCanvas(cv);
   const bus = makeBus();
   const camera = makeCamera(bus);
   const particles = makeParticles(bus);
   const audio = makeAudio(bus);
   const arena = makeArena(size);
-  const draw = makeRenderer(ctx, size, hud);
+  const renderer = makeRenderer(ctx, size, hud);
+  if (boot) boot.style.display = 'none'; // the menu scene is the start screen now
 
-  let started = false;
-
-  function begin() { audio.init(); if (!started) { started = true; if (boot) boot.style.display = 'none'; scene.reset(); } cv.focus && cv.focus(); }
-  function onPress() { if (!started) { begin(); return; } if (scene.isDead()) scene.restart(); }
-  function onKey(k) { if (!started) { begin(); return; } if (scene.isDead() && (k === ' ' || k === 'enter')) scene.restart(); }
-
-  const input = makeInput(cv, { press: onPress, key: onKey });
-  const scene = makeSituationScene(situation, bus, arena, input);
+  let mgr; // forward ref: input handlers dispatch to the current scene
+  const input = makeInput(cv, {
+    press: () => { audio.init(); mgr.press(); },
+    key: (k) => { audio.init(); mgr.key(k); },
+  });
+  mgr = makeFlow({ ctx, size, hud, bus, arena, input, renderer, camera, particles });
 
   makeLoop((dt) => {
-    // feel always advances; gameplay is paused during hit-stop
     camera.update(dt); particles.update(dt); audio.update(dt);
-    if (started && !scene.isDead() && camera.freeze <= 0) scene.update(dt);
-    if (started) draw(scene.view(), camera, particles);
+    if (camera.freeze <= 0) mgr.update(dt); // hit-stop pauses gameplay; menus never freeze
+    mgr.draw();
   });
 
-  return { bus, loadSituation(s) { /* future: scene swap */ } };
+  return { bus };
 }
 
 

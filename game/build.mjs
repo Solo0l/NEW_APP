@@ -16,7 +16,8 @@ const ORDER = [
   'src/systems/trap.js', 'src/entities/mote.js',
   'src/feel/camera.js', 'src/feel/particles.js', 'src/feel/audio.js',
   'src/render/renderer.js',
-  'src/data/situations.js', 'src/scene/situation.js',
+  'src/data/situations.js',
+  'src/scene/situation.js', 'src/scene/manager.js', 'src/scene/menu.js', 'src/scene/complete.js', 'src/scene/flow.js',
   'src/game.js', 'src/main.js',
 ];
 
