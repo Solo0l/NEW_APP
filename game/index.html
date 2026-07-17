@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ChromaEscape — Demo (dev)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0c;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;-webkit-tap-highlight-color:transparent;}
+  #c{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;}
+  #hud{position:fixed;top:10px;left:12px;color:#5a6a7a;font-size:12px;letter-spacing:.05em;
+    pointer-events:none;line-height:1.6;text-shadow:0 1px 3px #000;z-index:2;}
+  #hud b{color:#9fd8ff;} #hud i{color:#ff9db3;font-style:normal;}
+  #boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#9fd8ff;font-size:15px;letter-spacing:.1em;background:#0a0a0c;z-index:3;cursor:pointer;text-align:center;line-height:2;padding:20px;}
+  #boot span{opacity:.65;font-size:13px;color:#7d8ea0;line-height:1.9;}
+</style>
+</head>
+<body>
+<!-- DEV shell: serve this folder over http (ES modules need a server). For the shippable
+     single file, run `node build.mjs` -> dist/chromaescape_demo.html (works via file://). -->
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="boot">CHROMAESCAPE · modular foundation (dev)
+<span>🔊 sound on — click / tap here, then WASD · arrows · drag to move<br><br>
+draw a loop around the mote to catch it</span></div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
