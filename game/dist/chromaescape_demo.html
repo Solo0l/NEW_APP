@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ChromaEscape — Demo (modular foundation)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0c;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;-webkit-tap-highlight-color:transparent;}
+  #c{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;}
+  #hud{position:fixed;top:10px;left:12px;color:#5a6a7a;font-size:12px;letter-spacing:.05em;
+    pointer-events:none;line-height:1.6;text-shadow:0 1px 3px #000;z-index:2;}
+  #hud b{color:#9fd8ff;} #hud i{color:#ff9db3;font-style:normal;}
+  #boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#9fd8ff;font-size:15px;letter-spacing:.1em;background:#0a0a0c;z-index:3;cursor:pointer;text-align:center;line-height:2;padding:20px;}
+  #boot span{opacity:.65;font-size:13px;color:#7d8ea0;line-height:1.9;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="boot">CHROMAESCAPE · modular foundation
+<span>🔊 sound on — click / tap here, then WASD · arrows · drag to move<br><br>
+draw a loop around the mote to catch it<br>
+(same game, now built from clean modules)</span></div>
+<script>
+// ===== src/config.js =====
+// Global, situation-independent constants. Per-Mote tunables live in data/situations.js.
+// Values ported verbatim from ChromaEscape_Situation02_Feinter — do not retune here (architecture only).
+const CFG = {
+  MAX_LIFE: 100,
+  START_LIFE: 100,
+  SPEED: 300,          // player px/s
+  TRAIL_LIFE: 2.6,     // seconds a lasso trail point lasts
+  DROP_SPACING: 9,     // px between lasso deposits
+  HEAL: 22,            // life regained per catch
+  HUE: 190,            // player / lasso hue
+  LOOP_MIN: 12,        // min stroke points before a loop can close
+  LOOP_CLOSE_R: 17,    // px proximity that closes a loop
+  STROKE_MAX: 280,     // max live-stroke length
+  TRAIL_MAX: 2000,     // max fading-trail points
+  ENC_R: 230,          // encirclement sense radius (mote)
+  ENC_BINS: 16,        // angular bins for encirclement
+  DANGER: 205,         // heartbeat danger radius
+  IDLE_BREAK: 0.28,    // s of no-move before the stroke resets
+};
+
+
+// ===== src/core/bus.js =====
+// Tiny pub/sub event bus — the decoupling backbone.
+// Gameplay EMITS semantic events; feel modules SUBSCRIBE. Gameplay never calls feel directly.
+function makeBus() {
+  const map = new Map();
+  return {
+    on(type, fn) {
+      if (!map.has(type)) map.set(type, []);
+      map.get(type).push(fn);
+      return () => { const a = map.get(type); const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); };
+    },
+    emit(type, ev) {
+      const a = map.get(type);
+      if (a) for (let i = 0; i < a.length; i++) a[i](ev);
+    },
+  };
+}
+
+
+// ===== src/core/canvas.js =====
+// Canvas ownership: context, size, resize. Knows nothing about the game.
+function makeCanvas(cv) {
+  const ctx = cv.getContext('2d');
+  const size = { w: 0, h: 0 };
+  function resize() { size.w = cv.width = cv.clientWidth || innerWidth; size.h = cv.height = cv.clientHeight || innerHeight; }
+  addEventListener('resize', resize);
+  resize();
+  return { cv, ctx, size, resize };
+}
+
+
+// ===== src/core/input.js =====
+// Input: raw keyboard + pointer -> a normalized movement intent. No gameplay knowledge.
+// Press/key callbacks let the Game decide start/restart based on its own state.
+function makeInput(cv, handlers = {}) {
+  const keys = {};
+  let touch = null;
+  addEventListener('keydown', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+    keys[e.key.toLowerCase()] = true;
+    handlers.key && handlers.key(e.key.toLowerCase());
+  });
+  addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+  cv.addEventListener('pointerdown', (e) => { handlers.press && handlers.press(); touch = { x: e.clientX, y: e.clientY }; });
+  cv.addEventListener('pointermove', (e) => { if (touch) touch = { x: e.clientX, y: e.clientY }; });
+  cv.addEventListener('pointerup', () => { touch = null; });
+
+  return {
+    keys,
+    get touch() { return touch; },
+    clearTouch() { touch = null; },
+    // returns {x,y,moving} — a unit vector toward the desired heading, or moving:false
+    moveVector(px, py) {
+      let dx = 0, dy = 0;
+      if (keys['w'] || keys['arrowup']) dy -= 1;
+      if (keys['s'] || keys['arrowdown']) dy += 1;
+      if (keys['a'] || keys['arrowleft']) dx -= 1;
+      if (keys['d'] || keys['arrowright']) dx += 1;
+      if (touch) { const vx = touch.x - px, vy = touch.y - py, d = Math.hypot(vx, vy); if (d > 6) { dx = vx / d; dy = vy / d; } }
+      const m = Math.hypot(dx, dy);
+      if (m > 0.01) return { x: dx / m, y: dy / m, moving: true };
+      return { x: 0, y: 0, moving: false };
+    },
+  };
+}
+
+
+// ===== src/core/loop.js =====
+// RAF loop with a clamped dt. The step callback decides how to spend the frame
+// (feel always advances; gameplay is gated by hit-stop inside the Game).
+function makeLoop(step) {
+  let last = performance.now();
+  let raf = 0;
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    step(dt);
+    raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+  return { stop() { cancelAnimationFrame(raf); } };
+}
+
+
+// ===== src/world/arena.js =====
+// Arena = SPACE only: bounds, spawn points, clamping, fling-out targets.
+// Knows nothing about Mote AI or Situations. Future obstacles/walls live here.
+function makeArena(size) {
+  return {
+    get w() { return size.w; },
+    get h() { return size.h; },
+    center() { return { x: size.w / 2, y: size.h / 2 }; },
+    clamp(p) { p.x = Math.max(0, Math.min(size.w, p.x)); p.y = Math.max(0, Math.min(size.h, p.y)); },
+    spawnMote() { return { x: Math.random() < 0.5 ? -40 : size.w + 40, y: Math.random() * size.h }; },
+    fling(fromX) { return { x: fromX < size.w / 2 ? -50 : size.w + 50, y: Math.random() * size.h }; },
+  };
+}
+
+
+// ===== src/world/player.js =====
+
+// Player = movement + life + lasso-emission bookkeeping. No trap geometry (that's systems/trap.js).
+function makePlayer(arena) {
+  const c = arena.center();
+  return {
+    x: c.x, y: c.y,
+    life: CFG.START_LIFE,
+    ldx: c.x, ldy: c.y, // last lasso drop position
+    idleT: 0,
+    reset() { const cc = arena.center(); this.x = cc.x; this.y = cc.y; this.life = CFG.START_LIFE; this.ldx = cc.x; this.ldy = cc.y; this.idleT = 0; },
+    update(dt, intent) {
+      if (intent.moving) {
+        this.x += intent.x * CFG.SPEED * dt;
+        this.y += intent.y * CFG.SPEED * dt;
+        arena.clamp(this);
+      }
+    },
+    // true once the player has travelled DROP_SPACING since the last lasso deposit
+    maybeDrop() {
+      const dd = Math.hypot(this.x - this.ldx, this.y - this.ldy);
+      if (dd >= CFG.DROP_SPACING) { this.ldx = this.x; this.ldy = this.y; return true; }
+      return false;
+    },
+  };
+}
+
+
+// ===== src/systems/trap.js =====
+
+// --- geometry helpers (pure) ---
+function segInt(a, b, c, d) {
+  const r = (p, q, s) => (q.x - p.x) * (s.y - p.y) - (q.y - p.y) * (s.x - p.x);
+  const d1 = r(c, d, a), d2 = r(c, d, b), d3 = r(a, b, c), d4 = r(a, b, d);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+function pointInPoly(pt, poly) {
+  let n = poly.length, inside = false;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if (((yi > pt.y) !== (yj > pt.y)) && (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+// Trap system: owns the live stroke + the fading trail, detects loop closure,
+// and reports how encircled a point is. It knows nothing about who it traps.
+function makeTrap() {
+  let stroke = [];
+  let trail = [];
+
+  return {
+    get stroke() { return stroke; },
+    get trail() { return trail; },
+    reset() { stroke = []; trail = []; },
+    breakStroke() { stroke.length = 0; },
+    update(dt) {
+      for (let i = trail.length - 1; i >= 0; i--) { trail[i].age += dt; if (trail[i].age > CFG.TRAIL_LIFE) trail.splice(i, 1); }
+    },
+    // add a lasso deposit; returns the enclosing polygon if this point closed a loop, else null
+    addPoint(x, y) {
+      const np = { x, y };
+      trail.push({ x, y, age: 0 });
+      if (trail.length > CFG.TRAIL_MAX) trail.shift();
+      let hit = -1;
+      if (stroke.length > CFG.LOOP_MIN) {
+        const a = stroke[stroke.length - 1], b = np;
+        for (let j = 0; j < stroke.length - CFG.LOOP_MIN; j++) {
+          if (Math.hypot(np.x - stroke[j].x, np.y - stroke[j].y) < CFG.LOOP_CLOSE_R) { hit = j; break; }
+          if (j > 0 && segInt(a, b, stroke[j - 1], stroke[j])) { hit = j; break; }
+        }
+      }
+      stroke.push(np);
+      if (stroke.length > CFG.STROKE_MAX) stroke.shift();
+      if (hit >= 0) { const poly = stroke.slice(hit); stroke = []; return poly; }
+      return null;
+    },
+    // how surrounded is (x,y) by the live stroke? returns { cover:0..1, fleeing, gapX, gapY }
+    senseEncirclement(x, y) {
+      const out = { cover: 0, fleeing: false, gapX: x, gapY: y };
+      if (stroke.length <= 10) return out;
+      const BINS = CFG.ENC_BINS, R2 = CFG.ENC_R * CFG.ENC_R;
+      const cov = new Array(BINS).fill(false);
+      let n = 0;
+      for (const s of stroke) {
+        const ex = s.x - x, ey = s.y - y;
+        if (ex * ex + ey * ey < R2) { const b = ((Math.atan2(ey, ex) + Math.PI) / (2 * Math.PI) * BINS | 0) % BINS; if (!cov[b]) { cov[b] = true; n++; } }
+      }
+      out.cover = n / BINS;
+      if (n >= BINS * 0.5) {
+        let bestStart = 0, bestLen = 0, curStart = 0, curLen = 0;
+        for (let i = 0; i < BINS * 2; i++) {
+          if (!cov[i % BINS]) { if (curLen === 0) curStart = i; curLen++; if (curLen > bestLen) { bestLen = Math.min(curLen, BINS); bestStart = curStart; } }
+          else curLen = 0;
+        }
+        if (bestLen > 0 && bestLen < BINS) {
+          const ang = (((bestStart + bestLen / 2) % BINS) / BINS) * 2 * Math.PI - Math.PI;
+          out.gapX = x + Math.cos(ang) * 300; out.gapY = y + Math.sin(ang) * 300; out.fleeing = true;
+        }
+      }
+      return out;
+    },
+  };
+}
+
+
+// ===== src/entities/mote.js =====
+
+// The Mote is ONE generic agent. All behaviour differences between Situations come from
+// its config (mc), never from forked code. It emits semantic events; feel modules react.
+// Behaviour ported verbatim from Situation02 (Sprinter locomotion + flee-to-gap + Feinter + panic).
+function makeMote(mc, bus, arena) {
+  const s = {
+    x: 0, y: 0, vx: 0, vy: 0, stun: 0,
+    tx: 0, ty: 0, fleeing: false, fledT: 0,
+    phase: 'rest', phaseT: 0, squash: 1,
+    feint: false, leanAng: 0,
+    trap: 0, trapTarget: 0, wasHigh: false, freeWiggle: 0,
+  };
+
+  const radius = (caps) => mc.rBase + Math.min(caps, 12) * mc.rGrow;
+  const speed = (caps) => mc.speed0 + caps * mc.speedPer;
+
+  function spawn() {
+    const p = arena.spawnMote();
+    s.x = p.x; s.y = p.y; s.vx = 0; s.vy = 0; s.stun = 0;
+    s.phase = 'rest'; s.phaseT = 0; s.squash = 1; s.feint = false; s.leanAng = 0;
+    s.trap = 0; s.trapTarget = 0; s.wasHigh = false; s.freeWiggle = 0; s.fledT = 0;
+    bus.emit('spawn', { x: s.x, y: s.y });
+  }
+
+  function update(dt, world) {
+    const { player, trap, caps } = world;
+
+    if (s.stun > 0) { s.stun -= dt; s.fleeing = false; s.trapTarget = 0; }
+    else {
+      let tx = player.x, ty = player.y, fleeing = false, cover = 0;
+      const enc = trap.senseEncirclement(s.x, s.y);
+      cover = enc.cover;
+      if (mc.fleeEnabled && enc.fleeing) { tx = enc.gapX; ty = enc.gapY; fleeing = true; }
+      s.tx = tx; s.ty = ty; s.fleeing = fleeing; s.trapTarget = cover;
+      s.fledT = fleeing ? 0.25 : Math.max(0, s.fledT - dt);
+
+      // SPRINTER locomotion: rest -> coil (telegraph) -> burst
+      s.phaseT -= dt;
+      if (s.phaseT <= 0) {
+        if (s.phase === 'coil') { s.phase = 'burst'; s.phaseT = mc.burstT; }
+        else if (s.phase === 'burst') { s.phase = 'rest'; s.phaseT = mc.restT * Math.max(0.6, 1 - caps * 0.03); }
+        else {
+          s.phase = 'coil'; s.phaseT = mc.coilT;
+          // FEINTER: the body may lean a lie; the eye (tx/ty) always tells the truth
+          const trueAng = Math.atan2(ty - s.y, tx - s.x);
+          s.feint = Math.random() < (fleeing ? mc.feintChanceFlee : mc.feintChanceHunt);
+          s.leanAng = s.feint ? trueAng + (Math.random() < 0.5 ? -1 : 1) * (1.9 + Math.random() * 0.7) : trueAng;
+          bus.emit('coil', { feint: s.feint });
+        }
+      }
+      let sp;
+      if (s.phase === 'burst') sp = (mc.burstSpeed + caps * 22) * (fleeing ? 1.12 : 1);
+      else if (s.phase === 'coil') sp = 0;
+      else sp = mc.restCreep;
+      s.squash = s.phase === 'coil' ? 0.66 : 1;
+      const mvx = tx - s.x, mvy = ty - s.y, md = Math.hypot(mvx, mvy) || 1;
+      const px = s.x, py = s.y;
+      s.x += mvx / md * sp * dt; s.y += mvy / md * sp * dt; s.vx = s.x - px; s.vy = s.y - py;
+      if (Math.hypot(s.x - player.x, s.y - player.y) < 24 + radius(caps) * 0.3) {
+        player.life -= mc.drain * dt; bus.emit('hit', {});
+      }
+    }
+
+    // PANIC (feel only): the more surrounded, the harder it struggles / the higher it cries
+    s.trap = s.trap + (s.trapTarget - s.trap) * Math.min(1, dt * 9);
+    bus.emit('panic', { level: s.stun > 0 ? 0 : s.trap });
+
+    // IT BROKE FREE: latch "nearly caught", fire once on breakout -> "it got away!"
+    if (s.trap > 0.62) s.wasHigh = true;
+    if (s.stun > 0) s.wasHigh = false;
+    if (s.stun <= 0 && s.wasHigh && s.trap < 0.4) {
+      if (s.fledT > 0) { bus.emit('escape', { x: s.x, y: s.y }); s.freeWiggle = 0.35; }
+      s.wasHigh = false;
+    }
+    if (s.freeWiggle > 0) s.freeWiggle -= dt;
+
+    // threat drives the heartbeat (silence when stunned or far)
+    let threat = -1;
+    if (s.stun <= 0) { const d = Math.hypot(s.x - player.x, s.y - player.y); if (d <= CFG.DANGER) threat = 1 - d / CFG.DANGER; }
+    bus.emit('threat', { level: threat });
+  }
+
+  return { state: s, spawn, update, radius, speed, coilT: mc.coilT };
+}
+
+
+// ===== src/feel/camera.js =====
+// Camera feel: screen shake + hit-stop. Subscribes to gameplay events; owns no logic.
+function makeCamera(bus) {
+  const cam = { shake: 0, freeze: 0 };
+  bus.on('caught', () => { cam.freeze = Math.max(cam.freeze, 0.09); cam.shake = Math.max(cam.shake, 14); });
+  bus.on('emptyLoop', () => { cam.freeze = Math.max(cam.freeze, 0.04); cam.shake = Math.max(cam.shake, 6); });
+  bus.on('hit', () => { cam.shake = Math.max(cam.shake, 5); });
+  cam.update = (dt) => { if (cam.freeze > 0) cam.freeze -= dt; if (cam.shake > 0) cam.shake = Math.max(0, cam.shake - dt * 55); };
+  return cam;
+}
+
+
+// ===== src/feel/particles.js =====
+// Particle feel. Subscribes to gameplay events and owns the "what a burst looks like"
+// decision. Gameplay only says WHAT happened (caught / escape), never how it looks.
+function makeParticles(bus) {
+  const parts = [];
+  function burst(x, y, n, hue, spd, life) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 6.283, v = spd * (0.35 + Math.random());
+      parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: life * (0.6 + Math.random() * 0.6), t0: life, hue, r: 1.4 + Math.random() * 2.6 });
+    }
+  }
+  bus.on('caught', (e) => { burst(e.x, e.y, 34, 190, 320, 0.6); burst(e.x, e.y, 12, 45, 180, 0.6); });
+  bus.on('escape', (e) => { burst(e.x, e.y, 9, 190, 150, 0.45); });
+  return {
+    parts, burst,
+    update(dt) { for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.9; p.vy *= 0.9; p.life -= dt; if (p.life <= 0) parts.splice(i, 1); } },
+    draw(ctx) {
+      ctx.globalCompositeOperation = 'lighter';
+      for (const p of parts) {
+        const k = Math.max(0, p.life / p.t0);
+        ctx.beginPath(); ctx.fillStyle = `hsla(${p.hue},100%,62%,${k})`; ctx.shadowBlur = 6 * k; ctx.shadowColor = `hsl(${p.hue},100%,60%)`;
+        ctx.arc(p.x, p.y, p.r * k + 0.4, 0, 7); ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over'; ctx.shadowBlur = 0;
+    },
+  };
+}
+
+
+// ===== src/feel/audio.js =====
+// Audio feel. Subscribes to gameplay events; owns all synthesis and the heartbeat/panic cadence.
+// Philosophy preserved: silence baseline; sound marks change. All tones ported verbatim.
+function makeAudio(bus) {
+  let AC = null, master = null, on = false;
+  const cd = {};                 // one-shot throttles
+  let threat = -1, panicLvl = 0; // per-frame levels pushed by events
+  let heartT = 0, squeakT = 0;   // cadence timers owned here (moved out of gameplay)
+
+  function init() {
+    if (on) return;
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      if (AC.state === 'suspended') AC.resume();
+      master = AC.createGain(); master.gain.value = 0.9; master.connect(AC.destination);
+      on = true;
+    } catch (e) { /* audio unavailable */ }
+  }
+  const env = (t, f0, f1, pk, dur) => {
+    const o = AC.createOscillator(), g = AC.createGain(); o.connect(g); g.connect(master); o.type = t;
+    o.frequency.setValueAtTime(f0, AC.currentTime); o.frequency.exponentialRampToValueAtTime(f1, AC.currentTime + dur);
+    g.gain.setValueAtTime(pk, AC.currentTime); g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+    o.start(); o.stop(AC.currentTime + dur + 0.02);
+  };
+  function trapTone(streak) {
+    if (!on) return; const now = AC.currentTime, m = 1 + Math.min(streak, 12) * 0.06;
+    const o = AC.createOscillator(), g = AC.createGain(); o.type = 'triangle'; o.connect(g); g.connect(master);
+    o.frequency.setValueAtTime(240 * m, now); o.frequency.exponentialRampToValueAtTime(720 * m, now + 0.34);
+    g.gain.setValueAtTime(0.24, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.36); o.start(now); o.stop(now + 0.38);
+    const o2 = AC.createOscillator(), g2 = AC.createGain(); o2.type = 'sine'; o2.connect(g2); g2.connect(master);
+    o2.frequency.setValueAtTime(180, now); o2.frequency.exponentialRampToValueAtTime(40, now + 0.24);
+    g2.gain.setValueAtTime(0.34, now); g2.gain.exponentialRampToValueAtTime(0.001, now + 0.28); o2.start(now); o2.stop(now + 0.3);
+  }
+  function sfxHit() { const t = performance.now(); if (cd.hit && t - cd.hit < 120) return; cd.hit = t; if (on) env('square', 72, 46, 0.22, 0.13); }
+  function sfxCoil() { if (on) env('triangle', 320, 560, 0.05, 0.12); }
+  function squeak(p) { if (!on) return; const now = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(); o.type = 'sawtooth'; o.connect(g); g.connect(master); const f = 680 + p * 880; o.frequency.setValueAtTime(f, now); o.frequency.linearRampToValueAtTime(f * 1.14, now + 0.05); o.frequency.linearRampToValueAtTime(f * 0.9, now + 0.1); g.gain.setValueAtTime(0.045 + p * 0.05, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.11); o.start(now); o.stop(now + 0.12); }
+  function gasp() { if (on) env('sine', 920, 280, 0.12, 0.26); }
+  function heartbeat(vol) {
+    if (!on) return; const now = AC.currentTime;
+    const mk = (at, f, v) => { const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(f, at); o.frequency.exponentialRampToValueAtTime(f * 0.6, at + 0.12); g.gain.setValueAtTime(v, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.15); o.connect(g); g.connect(master); o.start(at); o.stop(at + 0.17); };
+    mk(now, 60, vol); mk(now + 0.15, 50, vol * 0.65);
+  }
+
+  bus.on('coil', () => sfxCoil());
+  bus.on('hit', () => sfxHit());
+  bus.on('caught', (e) => trapTone(e.streak));
+  bus.on('emptyLoop', () => trapTone(0));
+  bus.on('escape', () => gasp());
+  bus.on('threat', (e) => { threat = e.level; });
+  bus.on('panic', (e) => { panicLvl = e.level; });
+
+  return {
+    init,
+    update(dt) {
+      if (on && threat >= 0) { heartT -= dt; if (heartT <= 0) { heartT = 0.72 - threat * 0.44; heartbeat(0.05 + threat * 0.09); } }
+      else heartT = 0;
+      if (on && panicLvl > 0.42) { squeakT -= dt; if (squeakT <= 0) { squeak(panicLvl); squeakT = 0.30 - panicLvl * 0.18; } }
+    },
+  };
+}
+
+
+// ===== src/render/renderer.js =====
+
+// Pure presentation. Draws the world from a read-only view; contains no gameplay logic.
+// Ported verbatim from Situation02 draw(); only variable sources changed.
+function makeRenderer(ctx, size, hud) {
+  const HUE = CFG.HUE, MAX = CFG.MAX_LIFE;
+
+  return function draw(view, camera, particles) {
+    const W = size.w, H = size.h;
+    const player = view.player, m = view.mote.state, caps = view.caps, tSurv = view.tSurv, dead = view.dead;
+    const baseR = view.mote.radius(caps);
+    const trail = view.trap.trail, stroke = view.trap.stroke, fx = view.fx, fxT = view.fxT;
+    const shake = camera.shake;
+    const lf = Math.max(0, view.life / MAX);
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#0b0c0f'; ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    if (shake > 0) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+
+    // faded trail
+    ctx.globalCompositeOperation = 'lighter';
+    for (const p of trail) { const a = Math.max(0, 1 - p.age / CFG.TRAIL_LIFE) * 0.5; ctx.beginPath(); ctx.fillStyle = `hsla(${HUE},100%,60%,${a})`; ctx.arc(p.x, p.y, 3.2, 0, 7); ctx.fill(); }
+    // live lasso
+    if (stroke.length > 1) {
+      ctx.strokeStyle = `hsla(${HUE},100%,72%,0.9)`; ctx.lineWidth = 3.5; ctx.shadowBlur = 12; ctx.shadowColor = `hsl(${HUE},100%,60%)`;
+      ctx.beginPath(); ctx.moveTo(stroke[0].x, stroke[0].y); for (const s of stroke) ctx.lineTo(s.x, s.y); ctx.stroke(); ctx.shadowBlur = 0;
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // loop-catch flashes
+    for (const f of fx) {
+      const k = f.t / f.t0; ctx.beginPath(); ctx.moveTo(f.poly[0].x, f.poly[0].y);
+      for (const p of f.poly) ctx.lineTo(p.x, p.y); ctx.closePath();
+      ctx.fillStyle = `hsla(${HUE},100%,70%,${0.3 * k})`; ctx.fill();
+      ctx.strokeStyle = `hsla(${HUE},100%,82%,${0.9 * k})`; ctx.lineWidth = 3; ctx.stroke();
+    }
+
+    // MOTE
+    {
+      const caught = m.stun > 0, tp = m.trap || 0;
+      ctx.save();
+      let ox = 0, oy = 0;
+      if (!caught && (tp > 0.35 || m.freeWiggle > 0)) { const j = tp * tp * 6 + (m.freeWiggle > 0 ? 4 : 0); ox += (Math.random() * 2 - 1) * j; oy += (Math.random() * 2 - 1) * j; }
+      if (!caught && m.phase === 'coil') { const amt = 15 * (1 - (m.phaseT || 0) / view.mote.coilT); ox += Math.cos(m.leanAng || 0) * amt; oy += Math.sin(m.leanAng || 0) * amt; }
+      if (ox || oy) ctx.translate(ox, oy);
+      const spd = Math.hypot(m.vx || 0, m.vy || 0), ang = Math.atan2(m.vy || 0, (m.vx || 0.0001));
+      let stretch = caught ? 0 : Math.min(0.5, spd * 0.02);
+      const breathe = 1 + 0.05 * Math.sin(tSurv * (caught ? 3 : 11));
+      const rHue = caught ? 210 : Math.max(0, 340 - caps * 6);
+      if ((spd > 3.4 || caps > 4) && !caught) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let k = 1; k <= 2; k++) { ctx.beginPath(); ctx.fillStyle = `hsla(${rHue},90%,50%,${0.10 / k})`; ctx.arc(m.x - (m.vx || 0) * k * 1.6, m.y - (m.vy || 0) * k * 1.6, baseR * (1 - 0.12 * k), 0, 7); ctx.fill(); }
+        ctx.globalCompositeOperation = 'source-over';
+      }
+      const sq = caught ? 1 : (m.squash || 1);
+      ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(ang); ctx.scale((1 + stretch) * breathe * sq, (1 - stretch * 0.55) * breathe * sq);
+      ctx.fillStyle = caught ? '#20242c' : '#080709'; ctx.beginPath(); ctx.arc(0, 0, baseR, 0, 7); ctx.fill(); ctx.restore();
+      if (!caught && m.phase === 'coil') {
+        const k = Math.max(0, (m.phaseT || 0) / view.mote.coilT);
+        ctx.strokeStyle = `hsla(45,100%,70%,${0.8 * (1 - k) + 0.2})`; ctx.lineWidth = 2.5; ctx.shadowBlur = 12; ctx.shadowColor = 'hsl(45,100%,60%)';
+        ctx.beginPath(); ctx.arc(m.x, m.y, baseR + 4 + k * 16, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+      }
+      ctx.lineWidth = 2; ctx.strokeStyle = `hsla(${rHue},${caught ? 10 : 85}%,60%,${0.5 + 0.25 * Math.sin(tSurv * (caught ? 2 : 10))})`;
+      ctx.shadowBlur = caps > 4 && !caught ? 14 : 0; ctx.shadowColor = `hsl(${rHue},85%,55%)`;
+      ctx.beginPath(); ctx.arc(m.x, m.y, baseR + 3, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+      if (caught) {
+        ctx.strokeStyle = '#8899aa'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(m.x - 5, m.y - 5); ctx.lineTo(m.x + 5, m.y + 5); ctx.moveTo(m.x + 5, m.y - 5); ctx.lineTo(m.x - 5, m.y + 5); ctx.stroke();
+      } else {
+        const eD = Math.atan2((m.ty || m.y) - m.y, (m.tx || m.x) - m.x), pr = baseR * (0.42 + 0.34 * tp);
+        const eyeOff = baseR * (m.phase === 'coil' ? 0.52 : 0.26);
+        const ex = m.x + Math.cos(eD) * eyeOff, ey = m.y + Math.sin(eD) * eyeOff, ec = (m.fleeing || tp > 0.4 || m.phase === 'coil') ? '#ffffff' : `hsl(${rHue},100%,62%)`;
+        ctx.beginPath(); ctx.fillStyle = ec; ctx.shadowBlur = 10 + tp * 10; ctx.shadowColor = ec; ctx.arc(ex, ey, pr, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.arc(ex - pr * 0.3, ey - pr * 0.3, pr * 0.28, 0, 7); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // player
+    if (!dead) {
+      const r = 13; ctx.globalCompositeOperation = 'lighter';
+      ctx.beginPath(); ctx.fillStyle = `hsl(${HUE},100%,70%)`; ctx.shadowBlur = 22; ctx.shadowColor = `hsl(${HUE},100%,65%)`;
+      ctx.arc(player.x, player.y, r, 0, 7); ctx.fill(); ctx.globalCompositeOperation = 'source-over'; ctx.shadowBlur = 0;
+    }
+
+    particles.draw(ctx);
+    for (const t of fxT) { const k = t.t / t.t0; ctx.textAlign = 'center'; ctx.fillStyle = `hsla(${HUE},100%,85%,${k})`; ctx.font = '700 20px ui-monospace,monospace'; ctx.fillText(t.txt, t.x, t.y); }
+    ctx.restore();
+
+    ctx.fillStyle = `rgba(80,6,10,${(1 - lf) * 0.5})`; ctx.fillRect(0, 0, W, H);
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H); ctx.textAlign = 'center';
+      ctx.fillStyle = '#cfe6ff'; ctx.font = '600 36px ui-monospace,monospace'; ctx.fillText('caught ' + caps, W / 2, H / 2 - 24);
+      ctx.font = '15px ui-monospace,monospace'; ctx.fillStyle = '#7f93a8'; ctx.fillText(`survived ${tSurv.toFixed(1)}s   ·   best ${view.best}`, W / 2, H / 2 + 8);
+      ctx.fillStyle = '#9fd8ff'; ctx.fillText('press SPACE / tap to try again', W / 2, H / 2 + 40);
+    }
+    if (hud) hud.innerHTML = dead ? '' : `caught <b>${caps}</b> · life <i>${Math.ceil(view.life)}</i><br>circle the mote to trap it`;
+  };
+}
+
+
+// ===== src/data/situations.js =====
+// Situations are DATA, not code forks. A new Situation = a new object here.
+// S01 and S02 run the exact same Mote/Trap/Scene code; they differ only in these numbers.
+// Values ported verbatim from the standalone prototypes.
+
+const SPRINTER_LOCOMOTION = {
+  speed0: 150, speedPer: 13,   // moteSpeed = speed0 + caps*speedPer
+  rBase: 12, rGrow: 1.1,       // moteR = rBase + min(caps,12)*rGrow
+  drain: 30,                   // life/s on contact
+  restT: 0.72, coilT: 0.26, burstT: 0.18, burstSpeed: 520, restCreep: 48,
+  fleeEnabled: true,           // bolt for the gap when encircled
+};
+
+const SITUATION_01 = {
+  id: 'S01', name: 'The Sprinter',
+  mote: { ...SPRINTER_LOCOMOTION, feintChanceFlee: 0, feintChanceHunt: 0 }, // no feint
+};
+
+const SITUATION_02 = {
+  id: 'S02', name: 'The Feinter',
+  mote: { ...SPRINTER_LOCOMOTION, feintChanceFlee: 0.45, feintChanceHunt: 0.28 }, // feint on
+};
+
+const SITUATIONS = [SITUATION_01, SITUATION_02];
+
+
+// ===== src/scene/situation.js =====
+
+// One generic, data-driven scene. Runs ANY SituationConfig. Adding a Situation adds NO scene code.
+// Owns run state (score, timer, death) and loop-closure CONSEQUENCES; emits feel events.
+function makeSituationScene(sit, bus, arena, input) {
+  const player = makePlayer(arena);
+  const trap = makeTrap();
+  const mote = makeMote(sit.mote, bus, arena);
+  let caps = 0, tSurv = 0, dead = false, best = 0;
+  const fx = [];   // loop-ignite polygons
+  const fxT = [];  // floating "CAUGHT" labels
+
+  function reset() {
+    player.reset(); trap.reset(); mote.spawn();
+    caps = 0; tSurv = 0; dead = false; fx.length = 0; fxT.length = 0;
+  }
+
+  // consequences of a closed loop (the "trap" resolution) — feel is emitted, never called
+  function resolveLoop(poly) {
+    if (poly.length < CFG.LOOP_MIN) return;
+    fx.push({ poly, t: 0.6, t0: 0.6 });
+    const m = mote.state;
+    if (m.stun <= 0 && pointInPoly({ x: m.x, y: m.y }, poly)) {
+      caps++;
+      player.life = Math.min(CFG.MAX_LIFE, player.life + CFG.HEAL);
+      bus.emit('caught', { x: m.x, y: m.y, streak: caps });
+      fxT.push({ x: m.x, y: m.y - 20, txt: 'CAUGHT ×' + caps, t: 1.0, t0: 1.0 });
+      m.stun = 1.3;
+      const f = arena.fling(m.x); m.x = f.x; m.y = f.y;
+    } else {
+      bus.emit('emptyLoop', {});
+    }
+  }
+
+  function update(dt) {
+    tSurv += dt;
+    const intent = input.moveVector(player.x, player.y);
+    player.update(dt, intent);
+    if (intent.moving) {
+      if (player.maybeDrop()) { const poly = trap.addPoint(player.x, player.y); if (poly) resolveLoop(poly); }
+      player.idleT = 0;
+    } else {
+      player.idleT += dt; if (player.idleT > CFG.IDLE_BREAK) trap.breakStroke();
+    }
+    trap.update(dt);
+    mote.update(dt, { player, trap, caps });
+    for (let i = fx.length - 1; i >= 0; i--) { fx[i].t -= dt; if (fx[i].t <= 0) fx.splice(i, 1); }
+    for (let i = fxT.length - 1; i >= 0; i--) { fxT[i].t -= dt; fxT[i].y -= 20 * dt; if (fxT[i].t <= 0) fxT.splice(i, 1); }
+    if (player.life <= 0) { player.life = 0; dead = true; best = Math.max(best, caps); }
+  }
+
+  return {
+    reset,
+    restart: reset,
+    update,
+    isDead() { return dead; },
+    // read-only snapshot for the renderer
+    view() { return { player, mote, trap, fx, fxT, get caps() { return caps; }, get tSurv() { return tSurv; }, get dead() { return dead; }, get best() { return best; }, get life() { return player.life; } }; },
+  };
+}
+
+
+// ===== src/game.js =====
+
+// Composition root. Owns nothing gameplay-specific; wires systems and runs the frame.
+// Which Situation to load is a data choice (default S02, the current prototype).
+function makeGame(cv, hud, boot, situation = SITUATION_02) {
+  const { ctx, size } = makeCanvas(cv);
+  const bus = makeBus();
+  const camera = makeCamera(bus);
+  const particles = makeParticles(bus);
+  const audio = makeAudio(bus);
+  const arena = makeArena(size);
+  const draw = makeRenderer(ctx, size, hud);
+
+  let started = false;
+
+  function begin() { audio.init(); if (!started) { started = true; if (boot) boot.style.display = 'none'; scene.reset(); } cv.focus && cv.focus(); }
+  function onPress() { if (!started) { begin(); return; } if (scene.isDead()) scene.restart(); }
+  function onKey(k) { if (!started) { begin(); return; } if (scene.isDead() && (k === ' ' || k === 'enter')) scene.restart(); }
+
+  const input = makeInput(cv, { press: onPress, key: onKey });
+  const scene = makeSituationScene(situation, bus, arena, input);
+
+  makeLoop((dt) => {
+    // feel always advances; gameplay is paused during hit-stop
+    camera.update(dt); particles.update(dt); audio.update(dt);
+    if (started && !scene.isDead() && camera.freeze <= 0) scene.update(dt);
+    if (started) draw(scene.view(), camera, particles);
+  });
+
+  return { bus, loadSituation(s) { /* future: scene swap */ } };
+}
+
+
+// ===== src/main.js =====
+
+// Entry point. DOM wiring only.
+makeGame(
+  document.getElementById('c'),
+  document.getElementById('hud'),
+  document.getElementById('boot'),
+);
+
+</script>
+</body>
+</html>
